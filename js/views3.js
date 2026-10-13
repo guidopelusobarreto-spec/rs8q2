@@ -32,8 +32,10 @@ export async function biblioteca(view, r, ctx) {
     ${list.length ? `<p>${esc(info.title || '')} · ${list.length} modelos</p>
       ${field('Mostrar', `<select id="sexSel">${[['', 'Todos'], ['hombre', 'Hombres'], ['mujer', 'Mujeres']].map(([k, v]) => opt(k, v, sex)).join('')}</select>`)}
       ${groups.map((g) => `<details class="card" ${groups.length === 1 ? 'open' : ''}><summary><strong>${esc(g)}</strong> (${shown.filter((t) => (t.compound || 'Otros') === g).length})</summary>
+        ${info.texts?.[g] ? `<details class="desc"><summary>Descripción completa (tu texto)</summary><div class="orig">${esc(info.texts[g])}</div></details>` : ''}
         ${shown.filter((t) => (t.compound || 'Otros') === g).map(card).join('')}</details>`).join('')}
-      ${info.compat?.length ? `<details class="card"><summary><strong>Compatibilidades (según tu protocolo)</strong></summary><ul class="plain">${info.compat.map((c) => `<li><strong>${esc(c.combinacion)}</strong> — ${esc(c.nivel)}<br><span class="small">${esc(c.motivo)}</span></li>`).join('')}</ul></details>` : ''}`
+      ${info.compat?.length ? `<details class="card"><summary><strong>Compatibilidades (según tu protocolo)</strong></summary><ul class="plain">${info.compat.map((c) => `<li class="cmp-${esc(c.tipo || '')}"><strong>${esc(c.combinacion)}</strong> — ${esc(c.nivel)}<br><span class="small">${esc(c.motivo)}</span></li>`).join('')}</ul></details>` : ''}
+      ${info.original ? `<details class="card"><summary><strong>Texto original completo</strong></summary><div class="orig">${esc(info.original)}</div></details>` : ''}`
     : '<div class="card"><p>La biblioteca está vacía. Carga el archivo .json con tus protocolos.</p></div>'}`;
 
   $('#libFile').addEventListener('change', async (e) => {
@@ -55,7 +57,7 @@ export async function biblioteca(view, r, ctx) {
 async function applyDialog(ctx, t, products, profiles) {
   const fixed = t.durationMin != null && t.durationMin === t.durationMax;
   const hint = t.durationText ? `Tu protocolo: ${t.durationText}.` : 'Tu protocolo no fija duración.';
-  const plans = await dialog(`<form><h2>Aplicar: ${esc(t.name)}</h2>
+  const data = await dialog(`<form><h2>Aplicar: ${esc(t.name)}</h2>
     ${field('Persona', `<select name="profileId">${profiles.map((p) => opt(p.id, p.name, ctx.profileId)).join('')}</select>`, true)}
     ${field('Fecha de inicio', inp('start', todayISO(), 'type="date" required'), true)}
     ${field(`Duración (${unitTxt(t)})`, inp('duration', fixed ? t.durationMin : '', 'type="number" min="1" step="1"'))}
@@ -63,8 +65,29 @@ async function applyDialog(ctx, t, products, profiles) {
     ${t.items.map((it, i) => field(`Producto para «${it.substance}»`, `<select name="p${i}">${productOptions(products, it.productId)}</select>`)).join('')}
     <p class="small muted">Si una sustancia no está en el catálogo, añádela antes en Catálogo → «Añadir producto».</p>
     <div class="row"><button>Crear planes</button><button type="button" class="sec" data-close>Cancelar</button></div></form>`,
-  { onSubmit: (d) => ctx.model.applyTemplate(d.profileId, t.id, { start: d.start, duration: d.duration, products: Object.fromEntries(t.items.map((_, i) => [i, d['p' + i] || ''])) }) });
+  { onSubmit: (d) => d });
+  if (!data) return;
+  const products2 = Object.fromEntries(t.items.map((_, i) => [i, data['p' + i] || '']));
+  const dur = Number(data.duration) || 0;
+  const days = dur ? (t.durationUnit === 'dias' ? dur : dur * 7) - 1 : null;
+  const to = days != null && data.start ? new Date(new Date(data.start + 'T12:00:00').getTime() + days * 864e5).toISOString().slice(0, 10) : null;
+  const warns = data.start ? await ctx.model.compatCheck(data.profileId, { items: t.items.map((it, i) => ({ productId: products2[i], text: it.substance, label: it.substance })), from: data.start, to }) : [];
+  if (warns.length && !(await confirmCompat(warns))) return;
+  let plans;
+  try { plans = await ctx.model.applyTemplate(data.profileId, t.id, { start: data.start, duration: data.duration, products: products2 }); }
+  catch (e) { toast('No se aplicó: ' + e.message); return; }
   if (plans) {
     if (plans[0].profileId !== ctx.profileId) { ctx.profileId = plans[0].profileId; await saveUI({ profileId: ctx.profileId }); await refreshProfiles(); }
     toast(`${plans.length} plan(es) creados`); location.hash = plans.length === 1 ? '#/plan/' + plans[0].id : '#/planes'; }
+}
+
+// Aviso de combinación según la matriz del usuario. Devuelve true si decide continuar.
+const CMP_TITLE = { prohibida: 'No se debe combinar', precaucion: 'Combinación con precaución', redundante: 'Combinación redundante' };
+export async function confirmCompat(warns) {
+  const worst = warns[0].tipo;
+  return !!(await dialog(`<form><h2>${esc(CMP_TITLE[worst])}</h2>
+    <p class="small">Según la matriz de compatibilidad de tu protocolo:</p>
+    ${warns.map((w) => `<div class="alert ${w.tipo === 'prohibida' ? 'seguridad' : 'aviso'}"><strong>${esc(w.combinacion)}</strong> — ${esc(w.nivel)}<br>
+      ${esc(w.nuevo)} coincide con ${esc(w.con)}.<br><span class="small">${esc(w.motivo)}</span></div>`).join('')}
+    <div class="row"><button type="button" data-close>Cancelar</button><button class="sec">${worst === 'prohibida' ? 'Continuar igualmente (bajo mi responsabilidad)' : 'Continuar'}</button></div></form>`));
 }

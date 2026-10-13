@@ -469,19 +469,64 @@ export class Model {
   }
   // ── Biblioteca de protocolos: modelos escritos por el usuario; aplicar uno crea planes editables por persona ──
   async templates() { return (await this.store.all('templates')).sort((a, b) => (a.compound || '').localeCompare(b.compound || '', 'es') || a.name.localeCompare(b.name, 'es')); }
-  async libraryInfo() { return (await this.store.get('settings', 'library')) || { id: 'library', title: '', compat: [], warnings: [] }; }
+  async libraryInfo() { return { id: 'library', title: '', compat: [], warnings: [], substances: [], texts: {}, original: '', ...((await this.store.get('settings', 'library')) || {}) }; }
   async importLibrary(data, { replace = false } = {}) {
     const v = validateLibrary(data);
     if (v.errors.length) throw new ValidationError(v.errors.slice(0, 8).join(' · '));
     if (replace) await this.store.clear('templates');
     for (const t of v.templates) await this.store.put('templates', { ...t, importedAt: this.stamp() });
-    await this.store.put('settings', { id: 'library', title: data.titulo || '', compat: data.compatibilidad || [], warnings: data.avisos || [] });
+    await this.store.put('settings', { id: 'library', title: data.titulo || '', compat: data.compatibilidad || [], warnings: data.avisos || [],
+      substances: data.sustancias || [], texts: data.textos || {}, original: data.textoOriginal || '' });
     return v.templates.length;
   }
   async exportLibrary() {
     const info = await this.libraryInfo();
     return { app: 'registro-sustancias', tipo: 'biblioteca-protocolos', version: 1, titulo: info.title, exportedAt: this.stamp(),
-      compatibilidad: info.compat, avisos: info.warnings, templates: (await this.templates()).map(({ importedAt, ...t }) => t) };
+      compatibilidad: info.compat, avisos: info.warnings, sustancias: info.substances, textos: info.texts, textoOriginal: info.original, templates: (await this.templates()).map(({ importedAt, ...t }) => t) };
+  }
+  // Claves de sustancia (según la biblioteca) de un producto o texto: por código de catálogo o por nombre/alias.
+  async substanceKeys({ productId = '', text = '' } = {}, info = null) {
+    info ||= await this.libraryInfo();
+    const p = productId ? await this.product(productId) : null;
+    const hay = normTxt([p?.substance, p?.active, text].filter(Boolean).join(' '));
+    return info.substances.filter((s) => s.productIds?.includes(productId) || s.alias?.some((a) => hay.includes(normTxt(a)))).map((s) => s.key);
+  }
+  // Avisos de combinación según la matriz del usuario. Compara lo nuevo con planes abiertos y tomas del perfil en el periodo.
+  async compatCheck(profileId, { items = [], from, to = null, excludePlanIds = [] }) {
+    const info = await this.libraryInfo();
+    const rules = info.compat.filter((r) => r.tipo && r.tipo !== 'compatible' && r.a?.length && r.b?.length);
+    if (!rules.length) return [];
+    const name = (k) => info.substances.find((s) => s.key === k)?.nombre || k;
+    const newKeys = [];
+    for (const it of items) for (const k of await this.substanceKeys(it, info)) newKeys.push({ k, label: it.label || name(k) });
+    const existing = [];
+    for (const pl of await this.list('plans', profileId)) {
+      if (pl.closed || excludePlanIds.includes(pl.id)) continue;
+      const end = planEnd(pl) || '9999-12-31';
+      if (pl.start > (to || '9999-12-31') || end < from) continue;
+      for (const k of await this.substanceKeys({ productId: pl.productId, text: pl.name }, info)) existing.push({ k, label: `plan «${pl.name || name(k)}» (${esD(pl.start)} → ${planEnd(pl) ? esD(planEnd(pl)) : 'sin fin'})`, day: null });
+    }
+    for (const a of await this.list('administrations', profileId)) {
+      if (a.date < from || a.date > (to || '9999-12-31') || ['omitido', 'cancelado'].includes(a.status)) continue;
+      for (const k of await this.substanceKeys({ productId: a.productId }, info)) existing.push({ k, label: `toma del ${esD(a.date)}`, day: a.date });
+    }
+    const out = [], seen = new Set();
+    const pair = (x, y, r) => (r.a.includes(x) && r.b.includes(y)) || (r.b.includes(x) && r.a.includes(y));
+    for (const r of rules) {
+      for (const [i, n] of newKeys.entries()) {
+        for (const e of existing) if (pair(n.k, e.k, r)) {
+          if (r.mismoDia && from === to && e.day && e.day !== from) continue;
+          const key = r.combinacion + n.label + e.label;
+          if (!seen.has(key)) { seen.add(key); out.push({ tipo: r.tipo, combinacion: r.combinacion, nivel: r.nivel, motivo: r.motivo, nuevo: n.label, con: e.label }); }
+        }
+        for (const m of newKeys.slice(i + 1)) if (pair(n.k, m.k, r)) {
+          const key = r.combinacion + n.label + m.label;
+          if (!seen.has(key)) { seen.add(key); out.push({ tipo: r.tipo, combinacion: r.combinacion, nivel: r.nivel, motivo: r.motivo, nuevo: n.label, con: m.label }); }
+        }
+      }
+    }
+    const order = { prohibida: 0, precaucion: 1, redundante: 2 };
+    return out.sort((x, y) => order[x.tipo] - order[y.tipo]);
   }
   async deleteTemplate(id) { await this.store.del('templates', id); }
   async applyTemplate(profileId, templateId, d) {
@@ -507,6 +552,8 @@ export class Model {
 }
 
 const SEXES = ['hombre', 'mujer', 'ambos'];
+const esD = (d) => d.split('-').reverse().join('/');
+const normTxt = (x) => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 export function validateLibrary(data) {
   const errors = [], templates = [];
   if (!data || data.tipo !== 'biblioteca-protocolos') return { errors: ['El archivo no es una biblioteca de protocolos'], templates };

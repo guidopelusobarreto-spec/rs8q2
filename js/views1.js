@@ -1,4 +1,5 @@
 // Panel, registro, historial, catálogo, ficha de producto y perfiles.
+import { confirmCompat } from './views3.js';
 import { esc, $, $$, opt, field, inp, toast, dialog, fmtDate, fmtNum, readForm, showErr } from './ui.js';
 import { ADMIN_STATUS, EXCEED_TEXT, PLAN_MODES, planEnd, todayISO } from './model.js';
 import { CATEGORY_LABEL, STATUS_LABEL, RUO_LABEL, NOT_IMPORTED, CATALOG_SOURCE, presentation, totalActive } from './catalog.js';
@@ -100,6 +101,10 @@ export async function registro(view, r, ctx) {
     const d = readForm(f);
     try {
       if (!d.status) throw new Error('Elige el estado del registro (Realizado, Omitido…)');
+      if (d.productId && d.date && d.status !== 'omitido' && d.status !== 'cancelado') {
+        const warns = await m.compatCheck(pid, { items: [{ productId: d.productId }], from: d.date, to: d.date });
+        if (warns.length && !(await confirmCompat(warns))) return;
+      }
       const { admin, check } = await m.addAdministration(pid, d);
       if (check.afterEnd) await dialog(`<h2>Fecha final superada</h2><div class="alert seguridad">Este registro es posterior a la fecha final prevista del plan (${fmtDate(check.planEnd)}). Revisa el plan antes de continuar.</div><p><button data-close>Entendido</button></p>`);
       if (check.outsidePhases) await dialog(`<h2>Fuera del protocolo</h2><div class="alert aviso">La fecha cae en la semana ${check.phase.week} del plan y ninguna fase del protocolo la cubre. Revisa el plan.</div><p><button data-close>Entendido</button></p>`);
@@ -215,7 +220,14 @@ export async function producto(view, r, ctx) {
   const s = safetyFor(p.substance);
   const lots = ctx.profileId ? (await m.inventory(ctx.profileId)).filter((l) => l.productId === p.id) : [];
   const audit = ctx.profileId ? (await m.list('audit', ctx.profileId)).filter((a) => lots.some((l) => l.id === a.recId)) : [];
+  const info = await m.libraryInfo();
+  const keys = await m.substanceKeys({ productId: p.id }, info);
+  const mine = info.substances.filter((x) => keys.includes(x.key) && x.texto);
+  const rel = info.compat.filter((c) => keys.some((k) => c.a?.includes(k) || c.b?.includes(k)));
   view.innerHTML = `<p><a href="#/catalogo">← Catálogo</a></p><h1>${esc(p.substance)}</h1>
+    ${mine.length ? `<div class="card"><h2 style="margin-top:0">Descripción (tu protocolo)</h2>${mine.map((x) => `<div class="orig">${esc(x.texto)}</div>`).join('')}
+      ${rel.length ? `<h3>Combinaciones según tu matriz</h3><ul class="plain">${rel.map((c) => `<li class="cmp-${esc(c.tipo)}"><strong>${esc(c.combinacion)}</strong> — ${esc(c.nivel)}<br><span class="small">${esc(c.motivo)}</span></li>`).join('')}</ul>` : ''}
+      <p class="small muted">Texto escrito por ti en la Biblioteca; no es información verificada por la app.</p></div>` : ''}
     ${p.research ? `<div class="ruo-banner">${esc(RUO_LABEL)}</div>` : ''}
     ${s.warning ? `<div class="alert seguridad">${esc(s.warning)}</div>` : ''}
     <div class="card"><h2 style="margin-top:0">Ficha</h2><dl class="kv">

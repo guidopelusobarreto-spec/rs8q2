@@ -347,3 +347,26 @@ test('biblioteca: valida, importa el archivo del usuario y aplica creando planes
   assert.equal(exp.templates.length, lib.templates.length);
   assert.equal((await m.exportJSON(ana.id)).templates.length, lib.templates.length);
 });
+
+test('compatibilidad: avisa de combinaciones prohibidas y de precaución el mismo día', { skip: !process.env.LIB_FILE && 'LIB_FILE no indicado' }, async () => {
+  const { readFileSync } = await import('node:fs');
+  const lib = JSON.parse(readFileSync(process.env.LIB_FILE, 'utf8'));
+  const m = new Model(new MemoryStore());
+  await m.importLibrary(lib);
+  const b = await m.createProfile({ name: 'Bruno' });
+  await m.applyTemplate(b.id, 'rad-h', { start: '2026-11-02', duration: 8 });
+  const w = await m.compatCheck(b.id, { items: [{ productId: 'lgd10' }], from: '2026-11-10', to: '2026-12-10' });
+  assert.equal(w[0].tipo, 'prohibida'); assert.match(w[0].combinacion, /RAD-140 \+ LGD-4033/);
+  assert.equal((await m.compatCheck(b.id, { items: [{ productId: 'lgd10' }], from: '2027-03-01', to: '2027-04-01' })).length, 0);
+  // dentro del mismo protocolo nuevo
+  const self = await m.compatCheck(b.id, { items: [{ productId: 'osta25' }, { productId: 'lgd10' }], from: '2027-03-01', to: '2027-04-01' });
+  assert.equal(self[0].tipo, 'prohibida');
+  // PT-141 + Kisspeptin: solo el mismo día
+  await m.addAdministration(b.id, { productId: 'kiss10', date: '2027-05-03', time: '09:00', amount: 150, unit: 'mcg', status: 'realizado' });
+  assert.equal((await m.compatCheck(b.id, { items: [{ productId: 'pt141' }], from: '2027-05-03', to: '2027-05-03' }))[0].tipo, 'precaucion');
+  assert.equal((await m.compatCheck(b.id, { items: [{ productId: 'pt141' }], from: '2027-05-05', to: '2027-05-05' })).length, 0);
+  // los textos originales se guardan y exportan
+  const info = await m.libraryInfo();
+  assert.match(info.texts['RAD-140 (testolona)'], /Contraindicado/);
+  assert.equal((await m.exportLibrary()).textoOriginal, lib.textoOriginal);
+});

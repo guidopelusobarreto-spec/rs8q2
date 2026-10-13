@@ -102,3 +102,9 @@ details .tpl { padding: .6rem 0; margin: 0; border: 0; border-top: 1px solid var
 .tpl dl.kv { display: block; }
 .tpl dl.kv dt { font-weight: 600; margin-top: .3rem; }
 .tpl dl.kv dd { margin: 0; }
+.orig { white-space: pre-wrap; overflow-wrap: anywhere; font-size: .95rem; line-height: 1.5; margin: .4rem 0; }
+details.desc { margin: .4rem 0 .6rem; }
+details.desc > summary, details.card > summary { cursor: pointer; padding: .2rem 0; }
+li.cmp-prohibida { border-left: .35rem solid #b3261e; padding-left: .5rem; }
+li.cmp-precaucion, li.cmp-redundante { border-left: .35rem solid #b26a00; padding-left: .5rem; }
+li.cmp-compatible { border-left: .35rem solid #2e7d32; padding-left: .5rem; }

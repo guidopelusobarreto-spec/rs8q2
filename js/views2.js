@@ -5,6 +5,7 @@ import { COLLECTIONS } from './store.js';
 import { WHO_ACTIVITY, EMERGENCY } from './safety.js';
 import { productOptions, alertBox, dehydration, DEHYDRATION_TEXT, ruoBadge } from './views1.js';
 import { setPin, checkPin, askPermission, notifySupported, remindersToICS, checkDue } from './notify.js';
+import { confirmCompat } from './views3.js';
 import { saveUI, refreshProfiles, ctx as appCtx, installApp, appInstalledHere, updateLockBtn } from './app.js';
 
 const DOW = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
@@ -90,7 +91,10 @@ export async function planes(view, r, ctx) {
   $('#imp').addEventListener('click', () => importDialog(ctx).then((n) => n && planes(view, r, ctx)));
   $('#new').addEventListener('click', async () => {
     const p = await dialog(`<form><h2>Nuevo plan o periodo</h2>${planForm(products)}<div class="row"><button>Guardar</button><button type="button" class="sec" data-close>Cancelar</button></div></form>`, { onSubmit: (d) => m.addPlan(ctx.profileId, planData(d)) });
-    if (p) location.hash = '#/plan/' + p.id;
+    if (!p) return;
+    const warns = await m.compatCheck(ctx.profileId, { items: [{ productId: p.productId, text: p.name, label: p.name || 'este plan' }], from: p.start, to: planEnd(p), excludePlanIds: [p.id] });
+    if (warns.length && !(await confirmCompat(warns))) { await m.closePlan(ctx.profileId, p.id, true); toast('Plan guardado como cerrado: no se usará'); }
+    location.hash = '#/plan/' + p.id;
   });
 }
 
