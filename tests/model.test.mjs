@@ -280,3 +280,38 @@ test('fases del protocolo escritas por el usuario', async () => {
   assert.equal(r.check.outsidePhases, true);
   await assert.rejects(m.addPlan(p.id, { mode: 'duracion', start: '2026-10-01', duration: 1, phases: [{ fromWeek: 3, toWeek: 1 }] }), /semana/);
 });
+
+test('importación por plantilla: vista previa, errores y guardado', async () => {
+  const { parseImportText, importPlans } = await import('../js/model.js');
+  const m = mk();
+  const ana = await m.createProfile({ name: 'Ana' });
+  const products = await m.products();
+  const ok = `PLAN: Prueba
+PERSONA: ana
+SUSTANCIA: reta15
+INICIO: 2026-10-20
+DURACION: 8 semanas
+FUENTE: mi protocolo
+FASE: semanas 1-4 | 1 | unidad | semanal | x
+FASE: semanas 5-8 | 2,5 | unidad | semanal
+---
+PLAN: Mal
+PERSONA: Zoe
+SUSTANCIA: Retatrutida
+INICIO: 20/10/2026
+FASE: semanas 1-2 | dos | unidad
+frase suelta`;
+  const r = parseImportText(ok, { profiles: await m.profiles(), products });
+  assert.equal(r.length, 2);
+  assert.deepEqual(r[0].errors, []);
+  assert.equal(r[0].plan.phases[1].amount, 2.5);
+  assert.equal(r[0].plan.mode, 'duracion');
+  const e = r[1].errors.join(' | ');
+  for (const t of ['Zoe', 'varias presentaciones', 'número', 'no reconocida', 'no válida']) assert.match(e, new RegExp(t));
+  await assert.rejects(importPlans(m, r), /Corrige/);
+  const saved = await importPlans(m, [r[0]]);
+  assert.equal(saved[0].profileId, ana.id);
+  assert.equal(saved[0].computedEnd, '2026-12-14');
+  const over = parseImportText('PERSONA: Ana\nINICIO: 2026-10-20\nDURACION: 2 semanas\nFASE: semanas 1-4 | 1 | u', { profiles: await m.profiles(), products });
+  assert.match(over[0].errors.join(), /semana 2/);
+});

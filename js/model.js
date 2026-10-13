@@ -459,3 +459,60 @@ export function toCSV(rows) {
   // separador «;» para que Excel en español lo abra en columnas
   return '﻿' + [cols.join(';'), ...rows.map((r) => cols.map((c) => cell(r[c])).join(';'))].join('\r\n');
 }
+
+// ── Importación de planes desde texto con plantilla ──
+// No interpreta texto libre: solo reconoce las claves de la plantilla y marca como error todo lo demás.
+const MODE_ALIASES = { duracion: 'duracion', 'fecha fin': 'fecha_fin', fecha_fin: 'fecha_fin', continuo: 'continuo', pendiente: 'pendiente', descanso: 'descanso', investigacion: 'investigacion' };
+export function parseImportText(text, { profiles, products }) {
+  const blocks = String(text || '').split(/^\s*-{3,}\s*$/m).map((b) => b.trim()).filter(Boolean);
+  const norm = (x) => String(x || '').trim().toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '');
+  return blocks.map((block, bi) => {
+    const errors = [], plan = { phases: [] };
+    let profile = null, product = null;
+    block.split('\n').map((l) => l.trim()).filter((l) => l && !l.startsWith('#')).forEach((line, li) => {
+      const m = line.match(/^([A-Za-zÁÉÍÓÚáéíóúÑñ ]+):\s*(.*)$/);
+      if (!m) { errors.push(`Línea ${li + 1} no reconocida: «${line}»`); return; }
+      const key = norm(m[1]), val = m[2].trim();
+      if (key === 'plan') plan.name = val;
+      else if (key === 'persona') { profile = profiles.find((p) => norm(p.name) === norm(val)); if (!profile) errors.push(`Persona «${val}» no existe: créala antes en Perfiles`); }
+      else if (key === 'sustancia') {
+        const byId = products.find((p) => p.id === val);
+        const byName = products.filter((p) => norm(p.substance) === norm(val) && p.status === 'plan');
+        product = byId || (byName.length === 1 ? byName[0] : null);
+        if (!product) errors.push(byName.length > 1 ? `«${val}» tiene varias presentaciones: usa su código (${byName.map((p) => p.id).join(', ')})` : `Sustancia «${val}» no encontrada: usa el código que aparece en Catálogo`);
+      }
+      else if (key === 'inicio') plan.start = val;
+      else if (key === 'fin') plan.end = val;
+      else if (key === 'duracion') { const d = val.match(/^(\d+)\s*(dias?|semanas?|meses?)$/i); if (d) { plan.duration = +d[1]; plan.durationUnit = norm(d[2]).startsWith('sem') ? 'semanas' : norm(d[2]).startsWith('mes') ? 'meses' : 'dias'; } else errors.push(`Duración «${val}»: escribe p. ej. «8 semanas»`); }
+      else if (key === 'modalidad') { plan.mode = MODE_ALIASES[norm(val)]; if (!plan.mode) errors.push(`Modalidad «${val}» no válida`); }
+      else if (key === 'fuente') plan.source = val;
+      else if (key === 'nota' || key === 'notas') plan.notes = val;
+      else if (key === 'revision cada') { const n = parseInt(val, 10); if (n > 0) plan.reviewEveryDays = n; else errors.push('«Revisión cada» debe ser un número de días'); }
+      else if (key === 'fase') {
+        const [w, amount = '', unit = '', frequency = '', note = ''] = val.split('|').map((x) => x.trim());
+        const wm = w.match(/(\d+)\s*[-–]\s*(\d+)/) || w.match(/(\d+)/);
+        if (!wm) { errors.push(`Fase «${val}»: indica las semanas, p. ej. «semanas 1-4»`); return; }
+        if (amount !== '' && Number.isNaN(Number(amount.replace(',', '.')))) { errors.push(`Fase «${val}»: la cantidad debe ser un número`); return; }
+        if (amount !== '' && !unit) { errors.push(`Fase «${val}»: falta la unidad`); return; }
+        plan.phases.push({ fromWeek: +wm[1], toWeek: +(wm[2] || wm[1]), amount: amount === '' ? null : Number(amount.replace(',', '.')), unit, frequency, note });
+      } else errors.push(`Clave «${m[1]}» desconocida`);
+    });
+    if (!profile && !errors.some((e) => e.startsWith('Persona'))) errors.push('Falta «PERSONA:»');
+    if (!plan.start) errors.push('Falta «INICIO:» (AAAA-MM-DD)');
+    else if (!isDate(plan.start)) errors.push(`Fecha de inicio «${plan.start}» no válida (AAAA-MM-DD)`);
+    if (plan.end && !isDate(plan.end)) errors.push(`Fecha final «${plan.end}» no válida`);
+    plan.mode ||= plan.end ? 'fecha_fin' : plan.duration ? 'duracion' : 'pendiente';
+    try { plan.phases = parsePhases(plan.phases); } catch (e) { errors.push(e.message); }
+    if (plan.phases.length && (plan.duration || plan.end)) {
+      const end = planEnd({ ...plan }); const weeks = Math.ceil((diffDays(plan.start, end) + 1) / 7);
+      if (plan.phases.some((f) => f.toWeek > weeks)) errors.push(`Hay fases que pasan de la semana ${weeks}, donde termina el plan`);
+    }
+    return { index: bi + 1, profile, product, plan: { ...plan, productId: product?.id || '' }, errors };
+  });
+}
+export async function importPlans(model, parsed) {
+  if (parsed.some((p) => p.errors.length)) throw new ValidationError('Corrige los errores antes de importar');
+  const out = [];
+  for (const p of parsed) out.push(await model.addPlan(p.profile.id, { ...p.plan, enteredBy: 'Importación de texto', source: p.plan.source || 'Importación de texto' }));
+  return out;
+}

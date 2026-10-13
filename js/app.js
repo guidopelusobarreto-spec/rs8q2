@@ -19,7 +19,8 @@ const ROUTES = {
 export const ctx = { store: null, model: null, profileId: null, ui: null, locked: false, lastActive: Date.now() };
 
 async function loadUI() {
-  ctx.ui = (await ctx.store.get('settings', 'ui')) || { id: 'ui', profileId: null, size: '19', contrast: 'normal', lockMinutes: 5 };
+  ctx.ui = (await ctx.store.get('settings', 'ui')) || { id: 'ui', profileId: null, size: '22', contrast: 'normal', lockMinutes: 5 };
+  if (!ctx.ui.sizeChosen) ctx.ui.size = '22';
   document.documentElement.dataset.size = ctx.ui.size;
   document.documentElement.dataset.contrast = ctx.ui.contrast;
 }
@@ -75,7 +76,9 @@ let deferredInstall = null;
 const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
 addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); deferredInstall = e; updateInstallBtn(); });
 addEventListener('appinstalled', () => { deferredInstall = null; updateInstallBtn(); toast('App instalada'); });
-function updateInstallBtn() { const b = $('#installBtn'); if (b) b.hidden = isStandalone(); }
+function updateInstallBtn() { const b = $('#installBtn'); if (b) b.hidden = isStandalone() || !deferredInstall; }
+export const appInstalledHere = isStandalone;
+export async function updateLockBtn() { $('#lockBtn').hidden = !(await ctx.store.get('settings', 'pin')); }
 export async function installApp() {
   if (deferredInstall) {
     deferredInstall.prompt();
@@ -108,6 +111,7 @@ async function init() {
   $('#profileSel').addEventListener('change', async (e) => { ctx.profileId = e.target.value; await saveUI({ profileId: ctx.profileId }); render(); });
   $('#lockBtn').addEventListener('click', lockNow);
   $('#installBtn').addEventListener('click', installApp);
+  updateLockBtn();
   updateInstallBtn();
   addEventListener('hashchange', render);
   for (const ev of ['pointerdown', 'keydown']) addEventListener(ev, () => { ctx.lastActive = Date.now(); }, { passive: true });

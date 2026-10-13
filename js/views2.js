@@ -1,11 +1,11 @@
 // Calendario, ciclos, postciclo, recordatorios, peso, hábitos, informes, incidencias y ajustes.
 import { esc, $, $$, opt, field, inp, toast, dialog, fmtDate, fmtNum, readForm, showErr, download, lineChart } from './ui.js';
-import { PLAN_MODES, PCT_STATUS, PCT_UNDEFINED, REVIEW_DAYS, ADMIN_STATUS, planEnd, addDays, diffDays, todayISO, weightChange, toISODate } from './model.js';
+import { parseImportText, importPlans, PLAN_MODES, PCT_STATUS, PCT_UNDEFINED, REVIEW_DAYS, ADMIN_STATUS, planEnd, addDays, diffDays, todayISO, weightChange, toISODate } from './model.js';
 import { COLLECTIONS } from './store.js';
 import { WHO_ACTIVITY, EMERGENCY } from './safety.js';
 import { productOptions, alertBox, dehydration, DEHYDRATION_TEXT, ruoBadge } from './views1.js';
 import { setPin, checkPin, askPermission, notifySupported, remindersToICS, checkDue } from './notify.js';
-import { saveUI, refreshProfiles, ctx as appCtx } from './app.js';
+import { saveUI, refreshProfiles, ctx as appCtx, installApp, appInstalledHere, updateLockBtn } from './app.js';
 
 const DOW = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
 const DOW_FULL = [['1', 'Lun'], ['2', 'Mar'], ['3', 'Mié'], ['4', 'Jue'], ['5', 'Vie'], ['6', 'Sáb'], ['0', 'Dom']];
@@ -88,10 +88,11 @@ export async function planes(view, r, ctx) {
   const pn = (id) => products.find((p) => p.id === id);
   view.innerHTML = `<h1>Ciclos y periodos de seguimiento</h1>
     <p class="small muted">La app no supone duraciones (ni 4 semanas ni otra), no prolonga, reinicia ni repite ciclos y no genera pautas. Solo organiza lo que anotas.</p>
-    <p><button id="new">Nuevo plan o periodo</button></p>
-    <div class="card"><ul class="plain">${list.map((p) => { const end = planEnd(p); return `<li><a href="#/plan/${p.id}"><strong>${esc(p.name || PLAN_MODES[p.mode])}</strong></a> ${p.closed ? '<span class="badge">Cerrado</span>' : ''}
+    <div class="row"><button id="new">Nuevo plan o periodo</button><button id="imp" class="sec">Importar desde texto</button></div>
+    <div class="card" style="margin-top:1rem"><ul class="plain">${list.map((p) => { const end = planEnd(p); return `<li><a href="#/plan/${p.id}"><strong>${esc(p.name || PLAN_MODES[p.mode])}</strong></a> ${p.closed ? '<span class="badge">Cerrado</span>' : ''}
       <br>${esc(PLAN_MODES[p.mode])} · ${esc(pn(p.productId)?.substance || 'sin sustancia')} ${ruoBadge(pn(p.productId))}
       <br><span class="small">Inicio ${fmtDate(p.start)} · Fin ${end ? fmtDate(end) : 'sin fecha final registrada'}</span></li>`; }).join('') || '<li class="muted">Sin planes.</li>'}</ul></div>`;
+  $('#imp').addEventListener('click', () => importDialog(ctx).then((n) => n && planes(view, r, ctx)));
   $('#new').addEventListener('click', async () => {
     const p = await dialog(`<form><h2>Nuevo plan o periodo</h2>${planForm(products)}<div class="row"><button>Guardar</button><button type="button" class="sec" data-close>Cancelar</button></div></form>`, { onSubmit: (d) => m.addPlan(ctx.profileId, planData(d)) });
     if (p) location.hash = '#/plan/' + p.id;
@@ -378,8 +379,11 @@ export async function ajustes(view, r, ctx) {
       ${field('Bloqueo automático tras (minutos sin uso; 0 = nunca)', inp('lockMinutes', ctx.ui.lockMinutes, 'type="number" min="0" max="120"'))}</div><button>Guardar</button></form>
     <form class="card" id="pin"><h2 style="margin-top:0">Bloqueo con PIN</h2><p>Estado: <strong>${hasPin ? 'PIN activo' : 'sin PIN'}</strong></p>
       ${hasPin ? field('PIN actual', inp('old', '', 'type="password" inputmode="numeric" autocomplete="off"')) : ''}
+      <p class="small">Con PIN aparece arriba el botón <strong>Bloquear</strong>, que cierra la app al momento y pide el PIN para volver. Sin PIN ese botón no se muestra.</p>
       ${field('Nuevo PIN (4–8 cifras; vacío para quitarlo)', inp('pin', '', 'type="password" inputmode="numeric" autocomplete="off"'))}
       <p class="small muted">El PIN impide abrir la app en este dispositivo. <strong>Los datos no están cifrados</strong>: alguien con acceso técnico al navegador podría leerlos. Bloquea también el teléfono.</p><button>Guardar PIN</button></form>
+    <div class="card"><h2 style="margin-top:0">Instalación</h2><p>${appInstalledHere() ? 'Estás usando la app instalada.' : 'Estás en el navegador. Si ya la instalaste, ábrela desde su icono.'}</p>
+      <button id="inst" class="sec">Cómo instalar</button></div>
     <div class="card"><h2 style="margin-top:0">Copia de seguridad</h2>
       <p class="small">Los datos se guardan solo en este navegador y dispositivo; no se envían a ningún servidor ni servicio de IA. Si borras los datos del navegador o desinstalas la app, se pierden: haz copias.</p>
       <p class="small">Almacenamiento persistente: <strong>${persisted == null ? 'no disponible' : persisted ? 'concedido' : 'no concedido (el navegador podría borrar datos si falta espacio)'}</strong></p>
@@ -387,15 +391,16 @@ export async function ajustes(view, r, ctx) {
       <label class="check"><input type="checkbox" id="rsReplace">Al restaurar, sustituir todos los datos actuales</label></div>
     <div class="card"><h2 style="margin-top:0">Borrar todo</h2><p>Elimina todos los perfiles y datos de este dispositivo.</p><button id="wipe" class="danger">Borrar todos los datos</button></div>
     <div class="card small"><h2 style="margin-top:0">Sobre la app</h2><p>Registro organizado de datos declarados. No es un dispositivo médico, no recomienda cantidades ni protocolos, y registrar algo no prueba que un producto sea seguro, puro o adecuado.</p></div>`;
-  $('#ui').addEventListener('submit', async (e) => { e.preventDefault(); const d = readForm(e.target); await saveUI({ size: d.size, contrast: d.contrast, lockMinutes: Number(d.lockMinutes) || 0 }); toast('Guardado'); });
+  $('#ui').addEventListener('submit', async (e) => { e.preventDefault(); const d = readForm(e.target); await saveUI({ size: d.size, sizeChosen: true, contrast: d.contrast, lockMinutes: Number(d.lockMinutes) || 0 }); toast('Guardado'); });
   $('#pin').addEventListener('submit', async (e) => {
     e.preventDefault(); const d = readForm(e.target);
     try {
       if (hasPin && !(await checkPin(ctx.store, d.old || ''))) throw new Error('El PIN actual no es correcto');
       if (!d.pin) { await ctx.store.del('settings', 'pin'); toast('PIN eliminado'); } else { await setPin(ctx.store, d.pin); toast('PIN guardado'); }
-      ajustes(view, r, ctx);
+      await updateLockBtn(); ajustes(view, r, ctx);
     } catch (err) { showErr(e.target, err); }
   });
+  $('#inst').addEventListener('click', installApp);
   $('#bk').addEventListener('click', async () => download(`registro-copia-${todayISO()}.json`, JSON.stringify(await ctx.model.exportJSON(), null, 1), 'application/json'));
   $('#rs').addEventListener('change', async (e) => {
     const file = e.target.files[0]; if (!file) return;
@@ -409,5 +414,53 @@ export async function ajustes(view, r, ctx) {
       onSubmit: async (d) => { if (d.c !== 'BORRAR') throw new Error('Escribe BORRAR en mayúsculas'); for (const c of COLLECTIONS) await ctx.store.clear(c); return true; },
     });
     if (ok) { appCtx.profileId = null; location.hash = '#/'; location.reload(); }
+  });
+}
+
+// ── Importar planes desde texto ──
+export const IMPORT_TEMPLATE = `PLAN: nombre del plan
+PERSONA: nombre exacto del perfil
+SUSTANCIA: código del catálogo (p. ej. reta15)
+INICIO: AAAA-MM-DD
+DURACION: N semanas
+FUENTE: de dónde sale este protocolo
+FASE: semanas 1-4 | cantidad | unidad | frecuencia | nota
+FASE: semanas 5-8 | cantidad | unidad | frecuencia | nota
+---`;
+async function importDialog(ctx) {
+  const m = ctx.model;
+  const products = await m.products();
+  let parsed = [];
+  const d = document.getElementById('dlg');
+  d.innerHTML = `<h2>Importar planes desde texto</h2>
+    <p class="small">Pega uno o varios planes con esta plantilla. Separa cada plan con una línea <code>---</code>. Las líneas que empiezan por <code>#</code> se ignoran. Opcionales: <code>FIN:</code>, <code>MODALIDAD:</code>, <code>REVISION CADA:</code> (días), <code>NOTA:</code>.</p>
+    <pre class="small" style="white-space:pre-wrap;background:var(--bg);padding:.5rem;border-radius:.4rem">${esc(IMPORT_TEMPLATE)}</pre>
+    <div class="row"><button type="button" class="sec" id="cpy">Copiar plantilla</button><a class="btn sec" href="#/catalogo" id="cat">Ver códigos del catálogo</a></div>
+    <label for="impTxt">Tu texto</label><textarea id="impTxt" rows="10" spellcheck="false"></textarea>
+    <div class="row" style="margin-top:.6rem"><button type="button" id="chk">Revisar</button><button type="button" id="go" disabled>Importar</button><button type="button" class="sec" data-close>Cancelar</button></div>
+    <div id="prev" aria-live="polite"></div>`;
+  return new Promise((resolve) => {
+    const close = (v) => { d.close(); resolve(v); };
+    d.querySelector('[data-close]').addEventListener('click', () => close(0));
+    d.querySelector('#cat').addEventListener('click', () => close(0));
+    d.addEventListener('cancel', () => resolve(0), { once: true });
+    d.querySelector('#cpy').addEventListener('click', async () => { try { await navigator.clipboard.writeText(IMPORT_TEMPLATE); toast('Plantilla copiada'); } catch { toast('No se pudo copiar: selecciona el texto a mano'); } });
+    d.querySelector('#chk').addEventListener('click', async () => {
+      parsed = parseImportText(d.querySelector('#impTxt').value, { profiles: await m.profiles(), products });
+      const bad = parsed.some((x) => x.errors.length);
+      d.querySelector('#go').disabled = !parsed.length || bad;
+      d.querySelector('#prev').innerHTML = !parsed.length ? '<p class="err">No hay ningún plan en el texto.</p>' : parsed.map((x) => `<div class="card">
+        <h3 style="margin-top:0">Plan ${x.index}: ${esc(x.plan.name || '(sin nombre)')}</h3>
+        <dl class="kv"><dt>Persona</dt><dd>${esc(x.profile?.name || '—')}</dd><dt>Sustancia</dt><dd>${esc(x.product ? `${x.product.substance} (${x.product.id})` : '—')}</dd>
+        <dt>Inicio</dt><dd>${esc(x.plan.start || '—')}</dd><dt>Fin</dt><dd>${esc(planEnd(x.plan) || 'sin fecha final')}</dd><dt>Modalidad</dt><dd>${esc(PLAN_MODES[x.plan.mode] || x.plan.mode)}</dd>
+        <dt>Fases</dt><dd>${x.plan.phases.length ? x.plan.phases.map((f) => `Semanas ${f.fromWeek}–${f.toWeek}: ${f.amount ?? '—'} ${esc(f.unit)} · ${esc(f.frequency || '—')}`).join('<br>') : '—'}</dd></dl>
+        ${x.errors.length ? `<div class="alert seguridad">${x.errors.map(esc).join('<br>')}</div>` : '<p class="small">Sin errores.</p>'}</div>`).join('')
+        + (bad ? '<p class="err">Corrige los errores y vuelve a pulsar Revisar.</p>' : '<p>Comprueba cada cifra y unidad antes de importar.</p>');
+    });
+    d.querySelector('#go').addEventListener('click', async () => {
+      try { const out = await importPlans(m, parsed); toast(`${out.length} plan(es) importados`); close(out.length); }
+      catch (e) { d.querySelector('#prev').insertAdjacentHTML('afterbegin', `<p class="err">${esc(e.message)}</p>`); }
+    });
+    d.showModal();
   });
 }

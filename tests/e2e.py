@@ -26,11 +26,12 @@ with sync_playwright() as p:
     page.on('pageerror', lambda e: errors.append(str(e)))
     page.goto(URL); page.wait_for_selector('text=Bienvenido')
     ok('arranca sin perfiles')
-    ok('botón Instalar app visible', page.locator('#installBtn').is_visible())
-    page.click('#installBtn'); expect(dlg(page)).to_contain_text('Añadir a pantalla de inicio')
-    ok('sin aviso del navegador: instrucciones manuales'); dlg(page).locator('[data-close]').click()
+    ok('sin aviso del navegador: botón Instalar oculto', not page.locator('#installBtn').is_visible())
+    ok('sin PIN: botón Bloquear oculto', not page.locator('#lockBtn').is_visible())
+    ok('letra por defecto 22px', page.evaluate("document.documentElement.dataset.size") == '22')
     page.evaluate("""() => { const e = new Event('beforeinstallprompt'); e.prompt = () => { window.__prompted = true; };
       e.userChoice = Promise.resolve({ outcome: 'accepted' }); dispatchEvent(e); }""")
+    ok('con aviso del navegador: botón Instalar visible', page.locator('#installBtn').is_visible())
     page.click('#installBtn'); page.wait_for_timeout(300)
     ok('con aviso del navegador: lanza la instalación nativa', page.evaluate('window.__prompted === true') and dlg(page).get_attribute('open') is None)
 
@@ -191,11 +192,23 @@ with sync_playwright() as p:
 
     # PIN
     go(page, '#/ajustes'); page.fill('#pin [name=pin]', '2468'); page.click('#pin button'); page.wait_for_timeout(400)
+    ok('con PIN: botón Bloquear visible', page.locator('#lockBtn').is_visible())
     page.reload(); page.wait_for_selector('#lockForm')
     page.fill('#pin', '1111'); page.click('#lockForm button'); page.wait_for_timeout(300)
     ok('PIN incorrecto rechazado', 'PIN incorrecto' in page.inner_text('#pinErr'))
     page.fill('#pin', '2468'); page.click('#lockForm button'); page.wait_for_timeout(500)
     ok('PIN correcto desbloquea', page.locator('#lockForm').count() == 0)
+
+    # importador de texto
+    go(page, '#/planes'); page.wait_for_timeout(200); page.click('#imp')
+    page.fill('#impTxt', 'PLAN: Malo\nPERSONA: Nadie\nSUSTANCIA: reta15\nCOSA RARA')
+    page.click('text=Revisar'); page.wait_for_timeout(200)
+    ok('importador muestra errores y bloquea', dlg(page).locator('text=Importar').last.is_disabled())
+    page.fill('#impTxt', 'PLAN: Importado E2E\nPERSONA: Ana\nSUSTANCIA: reta15\nINICIO: ' + iso(today) + '\nDURACION: 8 semanas\nFASE: semanas 1-4 | 2 | mg | semanal')
+    page.click('text=Revisar'); page.wait_for_timeout(200)
+    page.locator('dialog[open] button:has-text("Importar")').last.click(); page.wait_for_timeout(400)
+    go(page, '#/planes'); page.wait_for_timeout(300)
+    ok('importador crea el plan', 'Importado E2E' in page.inner_text('main'))
 
     # anchos 320 y 360: sin desbordamiento horizontal
     routes = ['#/', '#/registro', '#/historial', f'#/calendario?v=mes&d={iso(today)}', '#/planes', '#/pct', '#/recordatorios', '#/peso',
@@ -208,10 +221,19 @@ with sync_playwright() as p:
             sw = page.evaluate('document.documentElement.scrollWidth')
             if sw > w: bad.append(f'{r}:{sw}')
         ok(f'sin desbordamiento a {w}px' + (f' {bad}' if bad else ''), not bad)
-    for size in ('25',):
+    for size in ('22', '25'):
         page.evaluate(f"document.documentElement.dataset.size='{size}'")
-        page.set_viewport_size({'width': 360, 'height': 760}); go(page, '#/registro')
-        ok('letra enorme (25px) a 360px sin desbordamiento', page.evaluate('document.documentElement.scrollWidth') <= 360)
+        for w in (320, 360):
+            page.set_viewport_size({'width': w, 'height': 760}); bad = []
+            for r in routes:
+                go(page, r); page.wait_for_timeout(120)
+                sw = page.evaluate('document.documentElement.scrollWidth')
+                if sw > w: bad.append(f'{r}:{sw}')
+            go(page, '#/planes'); page.wait_for_timeout(150); page.click('#imp'); page.wait_for_timeout(200)
+            dw = page.evaluate("Math.max(...[...document.querySelectorAll('dialog[open], dialog[open] *')].map(e => e.getBoundingClientRect().right))")
+            if dw > w + 1: bad.append(f'dialogo:{dw}')
+            dlg(page).locator('[data-close]').first.click()
+            ok(f'letra {size}px a {w}px sin desbordamiento' + (f' {bad}' if bad else ''), not bad)
 
     # sin conexión: el service worker sirve la app
     page.wait_for_timeout(500)
