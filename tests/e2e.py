@@ -26,6 +26,13 @@ with sync_playwright() as p:
     page.on('pageerror', lambda e: errors.append(str(e)))
     page.goto(URL); page.wait_for_selector('text=Bienvenido')
     ok('arranca sin perfiles')
+    ok('botón Instalar app visible', page.locator('#installBtn').is_visible())
+    page.click('#installBtn'); expect(dlg(page)).to_contain_text('Añadir a pantalla de inicio')
+    ok('sin aviso del navegador: instrucciones manuales'); dlg(page).locator('[data-close]').click()
+    page.evaluate("""() => { const e = new Event('beforeinstallprompt'); e.prompt = () => { window.__prompted = true; };
+      e.userChoice = Promise.resolve({ outcome: 'accepted' }); dispatchEvent(e); }""")
+    page.click('#installBtn'); page.wait_for_timeout(300)
+    ok('con aviso del navegador: lanza la instalación nativa', page.evaluate('window.__prompted === true') and dlg(page).get_attribute('open') is None)
 
     # 2. varios perfiles
     go(page, '#/perfiles')

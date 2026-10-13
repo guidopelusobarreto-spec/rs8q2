@@ -1,6 +1,6 @@
 import { IDBStore } from './store.js';
 import { Model } from './model.js';
-import { esc, $, opt, toast } from './ui.js';
+import { esc, $, opt, toast, dialog } from './ui.js';
 import { checkPin, checkDue, tryPeriodicSync } from './notify.js';
 import * as V1 from './views1.js';
 import * as V2 from './views2.js';
@@ -70,6 +70,28 @@ async function renderLock() {
 }
 export async function lockNow() { if (await ctx.store.get('settings', 'pin')) { ctx.locked = true; render(); } else toast('Primero define un PIN en Ajustes'); }
 
+// ── Instalación ──
+let deferredInstall = null;
+const isStandalone = () => matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); deferredInstall = e; updateInstallBtn(); });
+addEventListener('appinstalled', () => { deferredInstall = null; updateInstallBtn(); toast('App instalada'); });
+function updateInstallBtn() { const b = $('#installBtn'); if (b) b.hidden = isStandalone(); }
+export async function installApp() {
+  if (deferredInstall) {
+    deferredInstall.prompt();
+    const { outcome } = await deferredInstall.userChoice;
+    deferredInstall = null; updateInstallBtn();
+    if (outcome === 'accepted') return;
+  }
+  await dialog(`<h2>Instalar la app</h2>
+    <p>Tu navegador no ha ofrecido la instalación automática. Hazlo a mano:</p>
+    <h3>Android (Chrome)</h3><ol><li>Menú <strong>⋮</strong> arriba a la derecha.</li><li><strong>Instalar aplicación</strong> o <strong>Añadir a pantalla de inicio</strong> → <strong>Instalar</strong>.</li></ol>
+    <h3>Ordenador (Chrome o Edge)</h3><ol><li>Icono de instalar a la derecha de la barra de direcciones, o menú <strong>⋮</strong> → <strong>Enviar, guardar y compartir</strong> → <strong>Instalar página como aplicación</strong>.</li></ol>
+    <h3>iPhone (Safari)</h3><ol><li>Botón <strong>Compartir</strong> → <strong>Añadir a pantalla de inicio</strong>.</li></ol>
+    <p class="small muted">Si no aparece la opción, recarga la página una vez: Chrome necesita que la app se haya cargado completa al menos una vez.</p>
+    <p><button data-close>Entendido</button></p>`);
+}
+
 async function init() {
   try {
     ctx.store = await IDBStore.open();
@@ -85,6 +107,8 @@ async function init() {
   await refreshProfiles();
   $('#profileSel').addEventListener('change', async (e) => { ctx.profileId = e.target.value; await saveUI({ profileId: ctx.profileId }); render(); });
   $('#lockBtn').addEventListener('click', lockNow);
+  $('#installBtn').addEventListener('click', installApp);
+  updateInstallBtn();
   addEventListener('hashchange', render);
   for (const ev of ['pointerdown', 'keydown']) addEventListener(ev, () => { ctx.lastActive = Date.now(); }, { passive: true });
   setInterval(() => {
