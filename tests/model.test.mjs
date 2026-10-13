@@ -264,3 +264,19 @@ test('addDays cruza cambios de hora sin desfases', () => {
   assert.equal(addDays('2026-10-24', 2), '2026-10-26');
   assert.equal(addDays('2026-03-28', 2), '2026-03-30');
 });
+
+test('fases del protocolo escritas por el usuario', async () => {
+  const m = mk('2026-10-30T09:00:00');
+  const p = await m.createProfile({ name: 'P' });
+  const plan = await m.addPlan(p.id, { mode: 'duracion', start: '2026-10-01', duration: 8, durationUnit: 'semanas',
+    phases: [{ fromWeek: 5, toWeek: 8, amount: 4, unit: 'mg' }, { fromWeek: 1, toWeek: 4, amount: 2, unit: 'mg' }] });
+  assert.deepEqual(plan.phases.map((f) => f.fromWeek), [1, 5]);
+  let r = await m.addAdministration(p.id, { productId: 'reta15', date: '2026-10-08', time: '08:00', amount: 3, unit: 'mg', planId: plan.id, status: 'realizado' });
+  assert.equal(r.check.exceeded, true); assert.equal(r.check.reference, 2); assert.equal(r.check.phase.week, 2);
+  r = await m.addAdministration(p.id, { productId: 'reta15', date: '2026-10-29', time: '08:00', amount: 3, unit: 'mg', planId: plan.id, status: 'realizado' });
+  assert.equal(r.check.exceeded, false); assert.equal(r.check.reference, 4);
+  const p2 = await m.addPlan(p.id, { mode: 'duracion', start: '2026-10-01', duration: 8, durationUnit: 'semanas', phases: [{ fromWeek: 1, toWeek: 2, amount: 1, unit: 'mg' }] });
+  r = await m.addAdministration(p.id, { productId: 'reta15', date: '2026-10-29', time: '08:00', amount: 1, unit: 'mg', planId: p2.id, status: 'realizado' });
+  assert.equal(r.check.outsidePhases, true);
+  await assert.rejects(m.addPlan(p.id, { mode: 'duracion', start: '2026-10-01', duration: 1, phases: [{ fromWeek: 3, toWeek: 1 }] }), /semana/);
+});

@@ -63,12 +63,23 @@ const planForm = (products, p = {}) => `
   <p class="small muted">Si solo indicas duración, la fecha final se calcula desde el inicio (contando el día de inicio). Si no indicas ninguna, no se inventa.</p>
   <fieldset><legend>Cantidad documentada en el plan (opcional)</legend><p class="small muted">Solo se usa para avisar si un registro la supera con la misma unidad. La app no propone valores.</p>
   <div class="grid">${field('Cantidad del plan', inp('plannedAmount', p.plannedAmount ?? '', 'type="number" step="any" min="0"'))}${field('Unidad', inp('plannedUnit', p.plannedUnit || '', 'list="units2"') + '<datalist id="units2"><option value="mg"><option value="mcg"><option value="UI"><option value="ml"><option value="unidad"><option value="tableta"></datalist>')}</div></fieldset>
+  <fieldset><legend>Fases del protocolo (las escribes tú)</legend>
+    <p class="small muted">Una fase por línea: <code>semanas 1-4 | cantidad | unidad | frecuencia | nota</code>. Ejemplo de formato: <code>semanas 1-4 | 1 | tableta | diaria | indicación de mi médico</code>. La app no propone valores; solo compara los registros con lo que escribas.</p>
+    <textarea name="phasesText" rows="4">${esc((p.phases || []).map((f) => `semanas ${f.fromWeek}-${f.toWeek} | ${f.amount ?? ''} | ${f.unit} | ${f.frequency} | ${f.note}`).join('\n'))}</textarea></fieldset>
   ${field('Pauta anotada (texto libre)', `<textarea name="scheduleNote">${esc(p.scheduleNote || '')}</textarea>`)}
   ${field('Revisión periódica cada (días; seguimiento continuo)', inp('reviewEveryDays', p.reviewEveryDays ?? '', 'type="number" min="1"'))}
   <div class="grid">${field('Fuente de la información', inp('source', p.source || ''))}${field('Introducido por', inp('enteredBy', p.enteredBy || ''))}</div>
   <fieldset><legend>Alertas</legend>${[['d7', '7 días antes'], ['d2', '2 días antes'], ['d0', 'El día final'], ['overdue', 'Tras vencer'], ['afterEnd', 'Registro posterior al final']].map(([k, l]) => `<label class="check"><input type="checkbox" name="al_${k}" ${p.alerts?.[k] === false ? '' : 'checked'}>${l}</label>`).join('')}</fieldset>
   ${field('Observaciones', `<textarea name="notes">${esc(p.notes || '')}</textarea>`)}`;
-const planData = (d) => { const alerts = {}; for (const k of ['d7', 'd2', 'd0', 'overdue', 'afterEnd']) { alerts[k] = !!d['al_' + k]; delete d['al_' + k]; } return { ...d, alerts }; };
+export function parsePhaseText(t) {
+  return (t || '').split('\n').map((l) => l.trim()).filter(Boolean).map((l, i) => {
+    const [w, amount = '', unit = '', frequency = '', note = ''] = l.split('|').map((x) => x.trim());
+    const m = w.match(/(\d+)\s*[-–]\s*(\d+)/) || w.match(/(\d+)/);
+    if (!m) throw new Error(`Fase ${i + 1}: escribe las semanas como «semanas 1-4»`);
+    return { fromWeek: +m[1], toWeek: +(m[2] || m[1]), amount, unit, frequency, note };
+  });
+}
+const planData = (d) => { d.phases = parsePhaseText(d.phasesText); delete d.phasesText; const alerts = {}; for (const k of ['d7', 'd2', 'd0', 'overdue', 'afterEnd']) { alerts[k] = !!d['al_' + k]; delete d['al_' + k]; } return { ...d, alerts }; };
 
 export async function planes(view, r, ctx) {
   const m = ctx.model;
@@ -106,6 +117,7 @@ export async function planDetalle(view, r, ctx) {
     <div class="card"><dl class="kv"><dt>Modalidad</dt><dd>${esc(PLAN_MODES[p.mode])}</dd><dt>Sustancia</dt><dd>${esc(prod?.substance || '—')}</dd>
       <dt>Inicio</dt><dd>${fmtDate(p.start)}</dd><dt>Fin</dt><dd>${end ? fmtDate(end) + (p.end ? '' : ' (calculado por duración)') : 'Sin fecha final registrada'}</dd>
       <dt>Cantidad del plan</dt><dd>${p.plannedAmount != null ? `${fmtNum(p.plannedAmount, 4)} ${esc(p.plannedUnit)}` : '—'}</dd><dt>Pauta anotada</dt><dd>${esc(p.scheduleNote || '—')}</dd>
+      <dt>Fases del protocolo</dt><dd>${p.phases?.length ? p.phases.map((f) => `Semanas ${f.fromWeek}–${f.toWeek}: ${f.amount != null ? fmtNum(f.amount, 4) : '—'} ${esc(f.unit)} · ${esc(f.frequency || '—')}${f.note ? ' · ' + esc(f.note) : ''}`).join('<br>') : '—'}</dd>
       <dt>Revisión periódica</dt><dd>${p.reviewEveryDays ? `cada ${p.reviewEveryDays} días · próxima ${fmtDate(nextReview)}` : '—'}</dd>
       <dt>Fuente</dt><dd>${esc(p.source || '—')}</dd><dt>Introducido por</dt><dd>${esc(p.enteredBy || '—')}</dd><dt>Registrado</dt><dd>${new Date(p.createdAt).toLocaleString('es-ES')}</dd></dl>
       <div class="row noprint" style="margin-top:.6rem"><button id="edit" class="sec">Editar</button>${lastReview ? `<button id="rev" class="sec">Marcar revisión del ${fmtDate(lastReview)} como hecha</button>` : ''}<button id="close" class="sec">${p.closed ? 'Reabrir' : 'Cerrar plan'}</button>

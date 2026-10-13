@@ -46,6 +46,21 @@ export function planEnd(p) {
   return addDays(p.start, n - 1); // días, contando el día de inicio
 }
 
+// Fases escritas por el usuario: {fromWeek, toWeek, amount, unit, frequency, note}. Nada se rellena por defecto.
+export function parsePhases(list) {
+  if (!Array.isArray(list)) return [];
+  return list.map((f) => {
+    const x = { fromWeek: Number(f.fromWeek), toWeek: Number(f.toWeek), amount: num(f.amount), unit: (f.unit || '').trim(), frequency: (f.frequency || '').trim(), note: (f.note || '').trim() };
+    if (!(x.fromWeek >= 1) || !(x.toWeek >= x.fromWeek)) throw new ValidationError('Cada fase necesita semana inicial ≥ 1 y semana final ≥ inicial');
+    return x;
+  }).sort((a, b) => a.fromWeek - b.fromWeek);
+}
+export function phaseFor(plan, date) {
+  if (!plan?.phases?.length || !plan.start || date < plan.start) return null;
+  const week = Math.floor(diffDays(plan.start, date) / 7) + 1;
+  return plan.phases.find((f) => week >= f.fromWeek && week <= f.toWeek) ? { ...plan.phases.find((f) => week >= f.fromWeek && week <= f.toWeek), week } : { none: true, week };
+}
+
 // Comparación con el plan: solo si hay cantidad numérica válida y la unidad es idéntica. Sin conversiones.
 export function compareToPlan(amount, unit, plan) {
   if (!plan) return { comparable: false, reason: 'Sin plan asociado' };
@@ -187,13 +202,14 @@ export class Model {
     if (d.mode === 'fecha_fin') must(d.end, 'Esta modalidad necesita fecha de finalización');
     if (d.mode === 'duracion') must(num(d.duration) > 0, 'Indica la duración');
     const rec = { productId: d.productId || '', name: d.name || '', mode: d.mode, start: d.start, end: d.end || '',
-      duration: num(d.duration), durationUnit: d.durationUnit || 'dias', plannedAmount: num(d.plannedAmount), plannedUnit: d.plannedUnit || '',
+      duration: num(d.duration), durationUnit: d.durationUnit || 'dias', plannedAmount: num(d.plannedAmount), plannedUnit: d.plannedUnit || '', phases: parsePhases(d.phases),
       scheduleNote: d.scheduleNote || '', reviewEveryDays: num(d.reviewEveryDays), source: d.source || '', enteredBy: d.enteredBy || '',
       alerts: { d7: true, d2: true, d0: true, overdue: true, afterEnd: true, ...(d.alerts || {}) }, notes: d.notes || '' };
     rec.computedEnd = planEnd(rec);
     return this._add('plans', profileId, rec);
   }
   async updatePlan(profileId, id, patch) {
+    if (patch.phases !== undefined) patch = { ...patch, phases: parsePhases(patch.phases) };
     const p = await this._update('plans', id, patch, profileId);
     const ce = planEnd(p);
     return ce !== p.computedEnd ? this.store.put('plans', { ...p, computedEnd: ce }) : p;
@@ -224,7 +240,10 @@ export class Model {
     return { admin: rec, check: this.checkAdministration(rec, plan) };
   }
   checkAdministration(a, plan) {
-    const cmp = compareToPlan(a.amount, a.unit, plan);
+    const ph = phaseFor(plan, a.date);
+    const ref = ph && !ph.none ? { plannedAmount: ph.amount, plannedUnit: ph.unit } : plan;
+    const cmp = { ...compareToPlan(a.amount, a.unit, ph?.none ? null : ref), phase: ph };
+    if (ph?.none) cmp.outsidePhases = true;
     const end = plan ? planEnd(plan) : null;
     const afterEnd = !!(end && a.date > end && plan.alerts?.afterEnd !== false);
     return { ...cmp, afterEnd, planEnd: end };

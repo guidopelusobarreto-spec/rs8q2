@@ -102,6 +102,7 @@ export async function registro(view, r, ctx) {
       if (!d.status) throw new Error('Elige el estado del registro (Realizado, Omitido…)');
       const { admin, check } = await m.addAdministration(pid, d);
       if (check.afterEnd) await dialog(`<h2>Fecha final superada</h2><div class="alert seguridad">Este registro es posterior a la fecha final prevista del plan (${fmtDate(check.planEnd)}). Revisa el plan antes de continuar.</div><p><button data-close>Entendido</button></p>`);
+      if (check.outsidePhases) await dialog(`<h2>Fuera del protocolo</h2><div class="alert aviso">La fecha cae en la semana ${check.phase.week} del plan y ninguna fase del protocolo la cubre. Revisa el plan.</div><p><button data-close>Entendido</button></p>`);
       if (check.comparable && check.exceeded) await exceedFlow(ctx, admin, check);
       if (dehydration(d.symptoms + ' ' + d.adverse)) await dialog(`<h2>Atención</h2><div class="alert aviso">${DEHYDRATION_TEXT}</div><p><button data-close>Entendido</button></p>`);
       toast('Registro guardado');
