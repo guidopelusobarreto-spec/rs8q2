@@ -4,16 +4,17 @@ import { esc, $, opt, toast, dialog } from './ui.js';
 import { checkPin, checkDue, tryPeriodicSync } from './notify.js';
 import * as V1 from './views1.js';
 import * as V2 from './views2.js';
+import * as V3 from './views3.js';
 
 const MENU = [
-  ['', 'Panel'], ['registro', 'Registrar'], ['historial', 'Historial'], ['calendario', 'Calendario'], ['planes', 'Ciclos y periodos'],
+  ['', 'Panel'], ['registro', 'Registrar'], ['historial', 'Historial'], ['calendario', 'Calendario'], ['planes', 'Ciclos y periodos'], ['biblioteca', 'Biblioteca'],
   ['pct', 'Postciclo'], ['recordatorios', 'Recordatorios'], ['peso', 'Peso'], ['habitos', 'Hábitos'], ['informes', 'Informes'],
   ['incidencias', 'Incidencias'], ['catalogo', 'Catálogo'], ['perfiles', 'Perfiles'], ['ajustes', 'Ajustes'],
 ];
 const ROUTES = {
   '': V1.panel, registro: V1.registro, historial: V1.historial, catalogo: V1.catalogo, producto: V1.producto, perfiles: V1.perfiles,
   calendario: V2.calendario, planes: V2.planes, plan: V2.planDetalle, pct: V2.pct, recordatorios: V2.recordatorios, peso: V2.peso,
-  habitos: V2.habitos, informes: V2.informes, incidencias: V2.incidencias, ajustes: V2.ajustes,
+  habitos: V2.habitos, biblioteca: V3.biblioteca, informes: V2.informes, incidencias: V2.incidencias, ajustes: V2.ajustes,
 };
 
 export const ctx = { store: null, model: null, profileId: null, ui: null, locked: false, lastActive: Date.now() };
@@ -46,7 +47,7 @@ export async function render() {
   $('#menu').innerHTML = MENU.map(([k, l]) => `<a href="#/${k}" class="${(r.name === k || (r.name === 'plan' && k === 'planes') || (r.name === 'producto' && k === 'catalogo')) ? 'active' : ''}">${esc(l)}</a>`).join('');
   const view = $('#view');
   const fn = ROUTES[r.name] || V1.panel;
-  const needsProfile = !['', 'perfiles', 'catalogo', 'producto', 'ajustes', 'incidencias'].includes(r.name);
+  const needsProfile = !['', 'perfiles', 'catalogo', 'producto', 'ajustes', 'incidencias', 'biblioteca'].includes(r.name);
   if (needsProfile && !ctx.profileId) {
     view.innerHTML = '<div class="card"><h1>Primero crea un perfil</h1><p>Cada registro pertenece a una persona.</p><a class="btn" href="#/perfiles">Crear perfil</a></div>';
     return;

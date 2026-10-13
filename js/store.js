@@ -1,8 +1,8 @@
 // Almacenamiento: IndexedDB en el navegador; memoria en las pruebas. Misma interfaz.
 export const COLLECTIONS = ['profiles', 'customProducts', 'lots', 'plans', 'administrations', 'pct', 'reminders',
-  'weights', 'habits', 'incidents', 'events', 'audit', 'settings'];
+  'weights', 'habits', 'incidents', 'events', 'audit', 'settings', 'templates'];
 export const DB_NAME = 'registro-sustancias';
-export const DB_VERSION = 1;
+export const DB_VERSION = 2;
 
 export class MemoryStore {
   constructor() { this.data = Object.fromEntries(COLLECTIONS.map((c) => [c, new Map()])); }

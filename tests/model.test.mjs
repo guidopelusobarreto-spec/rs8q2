@@ -315,3 +315,35 @@ frase suelta`;
   const over = parseImportText('PERSONA: Ana\nINICIO: 2026-10-20\nDURACION: 2 semanas\nFASE: semanas 1-4 | 1 | u', { profiles: await m.profiles(), products });
   assert.match(over[0].errors.join(), /semana 2/);
 });
+
+test('biblioteca: valida, importa el archivo del usuario y aplica creando planes editables', { skip: !process.env.LIB_FILE && 'LIB_FILE no indicado' }, async () => {
+  const { readFileSync } = await import('node:fs');
+  const { validateLibrary, parsePhaseLine, phaseText } = await import('../js/model.js');
+  const lib = JSON.parse(readFileSync(process.env.LIB_FILE, 'utf8'));
+  const v = validateLibrary(lib);
+  assert.deepEqual(v.errors, []);
+  const m = new Model(new MemoryStore());
+  assert.equal(await m.importLibrary(lib), lib.templates.length);
+  const ana = await m.createProfile({ name: 'Ana' });
+  const plans = await m.applyTemplate(ana.id, 'comb-m', { start: '2026-11-02', duration: 16 });
+  assert.equal(plans.length, 4);
+  const reta = plans[0];
+  assert.equal(reta.duration, 16); assert.equal(reta.mode, 'duracion');
+  // semana 6: rango 2–2.5 mg; 2.5 no supera, 3 sí
+  const ok = (await m.addAdministration(ana.id, { productId: 'reta15', planId: reta.id, date: '2026-12-08', time: '09:00', amount: 2.5, unit: 'mg', status: 'realizado' })).check;
+  assert.equal(ok.exceeded, false);
+  const bad = (await m.addAdministration(ana.id, { productId: 'reta15', planId: reta.id, date: '2026-12-08', time: '10:00', amount: 3, unit: 'mg', status: 'realizado' })).check;
+  assert.equal(bad.exceeded, true);
+  await assert.rejects(() => m.applyTemplate(ana.id, 'rad-m', { start: '2026-11-02' }), /Contraindicado/);
+  await assert.rejects(() => m.applyTemplate(ana.id, 'tb500', { start: '2026-11-02', duration: 6 }), /semana 6/);
+  // el plan aplicado se edita sin tocar el modelo
+  await m.updatePlan(ana.id, reta.id, { phases: [{ fromWeek: 1, toWeek: 16, amount: 1, unit: 'mg' }] });
+  assert.equal((await m.store.get('templates', 'comb-m')).items[0].phases.length, 3);
+  // fases abiertas y rangos en texto
+  const f = parsePhaseLine('semanas 9-fin | 6-8 | mg | semanal');
+  assert.equal(f.toWeek, null); assert.equal(f.amountMax, 8);
+  assert.match(phaseText(f), /9–fin: 6–8 mg/);
+  const exp = await m.exportLibrary();
+  assert.equal(exp.templates.length, lib.templates.length);
+  assert.equal((await m.exportJSON(ana.id)).templates.length, lib.templates.length);
+});

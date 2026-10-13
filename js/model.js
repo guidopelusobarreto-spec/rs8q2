@@ -46,19 +46,40 @@ export function planEnd(p) {
   return addDays(p.start, n - 1); // días, contando el día de inicio
 }
 
-// Fases escritas por el usuario: {fromWeek, toWeek, amount, unit, frequency, note}. Nada se rellena por defecto.
+// Fases escritas por el usuario: {fromWeek, toWeek (null = hasta el final), amount, amountMax (rango), unit, frequency, note}. Nada se rellena por defecto.
 export function parsePhases(list) {
   if (!Array.isArray(list)) return [];
   return list.map((f) => {
-    const x = { fromWeek: Number(f.fromWeek), toWeek: Number(f.toWeek), amount: num(f.amount), unit: (f.unit || '').trim(), frequency: (f.frequency || '').trim(), note: (f.note || '').trim() };
-    if (!(x.fromWeek >= 1) || !(x.toWeek >= x.fromWeek)) throw new ValidationError('Cada fase necesita semana inicial ≥ 1 y semana final ≥ inicial');
+    const open = f.toWeek == null || f.toWeek === '' || f.toWeek === 'fin';
+    const x = { fromWeek: Number(f.fromWeek), toWeek: open ? null : Number(f.toWeek), amount: num(f.amount), amountMax: num(f.amountMax), unit: (f.unit || '').trim(), frequency: (f.frequency || '').trim(), note: (f.note || '').trim() };
+    if (!(x.fromWeek >= 1) || (!open && !(x.toWeek >= x.fromWeek))) throw new ValidationError('Cada fase necesita semana inicial ≥ 1 y semana final ≥ inicial');
+    if (x.amountMax != null && (x.amount == null || x.amountMax < x.amount)) throw new ValidationError('En un rango, la cantidad máxima debe ser mayor o igual que la mínima');
+    if (x.amountMax === x.amount) x.amountMax = null;
     return x;
   }).sort((a, b) => a.fromWeek - b.fromWeek);
+}
+// Una línea «semanas 1-4 | 2 | mg | semanal | nota». Semanas «9-fin» = hasta el final. Cantidad «6-8» = rango.
+export function parsePhaseLine(line) {
+  const [w, amount = '', unit = '', frequency = '', note = ''] = String(line).split('|').map((x) => x.trim());
+  const wm = w.match(/(\d+)\s*[-–]\s*(\d+|fin)/i) || w.match(/(\d+)/);
+  if (!wm) throw new ValidationError(`Fase «${line}»: indica las semanas, p. ej. «semanas 1-4» o «semanas 9-fin»`);
+  const am = amount.match(/^(\d+(?:[.,]\d+)?)(?:\s*[-–]\s*(\d+(?:[.,]\d+)?))?$/);
+  if (amount !== '' && !am) throw new ValidationError(`Fase «${line}»: la cantidad debe ser un número o un rango «6-8»`);
+  if (amount !== '' && !unit) throw new ValidationError(`Fase «${line}»: falta la unidad`);
+  const n = (v) => (v == null ? null : Number(v.replace(',', '.')));
+  const to = wm[2] == null ? +wm[1] : /fin/i.test(wm[2]) ? null : +wm[2];
+  return { fromWeek: +wm[1], toWeek: to, amount: am ? n(am[1]) : null, amountMax: am ? n(am[2]) : null, unit, frequency, note };
+}
+export function phaseText(f) {
+  const w = f.toWeek == null ? `${f.fromWeek}–fin` : `${f.fromWeek}–${f.toWeek}`;
+  const a = f.amount == null ? '—' : f.amountMax != null ? `${f.amount}–${f.amountMax}` : `${f.amount}`;
+  return `Semanas ${w}: ${a} ${f.unit || ''} · ${f.frequency || '—'}${f.note ? ' · ' + f.note : ''}`;
 }
 export function phaseFor(plan, date) {
   if (!plan?.phases?.length || !plan.start || date < plan.start) return null;
   const week = Math.floor(diffDays(plan.start, date) / 7) + 1;
-  return plan.phases.find((f) => week >= f.fromWeek && week <= f.toWeek) ? { ...plan.phases.find((f) => week >= f.fromWeek && week <= f.toWeek), week } : { none: true, week };
+  const f = plan.phases.find((x) => week >= x.fromWeek && week <= (x.toWeek ?? Infinity));
+  return f ? { ...f, week } : { none: true, week };
 }
 
 // Comparación con el plan: solo si hay cantidad numérica válida y la unidad es idéntica. Sin conversiones.
@@ -241,7 +262,7 @@ export class Model {
   }
   checkAdministration(a, plan) {
     const ph = phaseFor(plan, a.date);
-    const ref = ph && !ph.none ? { plannedAmount: ph.amount, plannedUnit: ph.unit } : plan;
+    const ref = ph && !ph.none ? { plannedAmount: ph.amountMax ?? ph.amount, plannedUnit: ph.unit } : plan;
     const cmp = { ...compareToPlan(a.amount, a.unit, ph?.none ? null : ref), phase: ph };
     if (ph?.none) cmp.outsidePhases = true;
     const end = plan ? planEnd(plan) : null;
@@ -429,7 +450,7 @@ export class Model {
       let rows = await this.store.all(c);
       if (c === 'settings') rows = profileId ? [] : rows.filter((r) => r.id !== 'pin');
       else if (c === 'profiles') rows = profileId ? rows.filter((r) => r.id === profileId) : rows;
-      else if (c !== 'customProducts' && profileId) rows = rows.filter((r) => r.profileId === profileId);
+      else if (c !== 'customProducts' && c !== 'templates' && profileId) rows = rows.filter((r) => r.profileId === profileId);
       out[c] = rows;
     }
     return out;
@@ -446,6 +467,70 @@ export class Model {
     const rows = !profileId ? all : collection === 'profiles' ? all.filter((r) => r.id === profileId) : collection === 'customProducts' ? all : all.filter((r) => r.profileId === profileId);
     return toCSV(rows.map(({ history, ...r }) => r));
   }
+  // ── Biblioteca de protocolos: modelos escritos por el usuario; aplicar uno crea planes editables por persona ──
+  async templates() { return (await this.store.all('templates')).sort((a, b) => (a.compound || '').localeCompare(b.compound || '', 'es') || a.name.localeCompare(b.name, 'es')); }
+  async libraryInfo() { return (await this.store.get('settings', 'library')) || { id: 'library', title: '', compat: [], warnings: [] }; }
+  async importLibrary(data, { replace = false } = {}) {
+    const v = validateLibrary(data);
+    if (v.errors.length) throw new ValidationError(v.errors.slice(0, 8).join(' · '));
+    if (replace) await this.store.clear('templates');
+    for (const t of v.templates) await this.store.put('templates', { ...t, importedAt: this.stamp() });
+    await this.store.put('settings', { id: 'library', title: data.titulo || '', compat: data.compatibilidad || [], warnings: data.avisos || [] });
+    return v.templates.length;
+  }
+  async exportLibrary() {
+    const info = await this.libraryInfo();
+    return { app: 'registro-sustancias', tipo: 'biblioteca-protocolos', version: 1, titulo: info.title, exportedAt: this.stamp(),
+      compatibilidad: info.compat, avisos: info.warnings, templates: (await this.templates()).map(({ importedAt, ...t }) => t) };
+  }
+  async deleteTemplate(id) { await this.store.del('templates', id); }
+  async applyTemplate(profileId, templateId, d) {
+    const t = await this.store.get('templates', templateId);
+    must(t, 'Protocolo no encontrado');
+    must(!t.blocked, `No aplicable: ${t.blocked}`);
+    must(isDate(d.start), 'Indica una fecha de inicio válida');
+    const dur = d.duration === '' || d.duration == null ? null : Number(d.duration);
+    if (dur != null) must(dur > 0, 'Duración no válida');
+    const unit = t.durationUnit || 'semanas';
+    const products = d.products || {};
+    const weeks = dur == null ? null : unit === 'dias' ? Math.ceil(dur / 7) : dur;
+    if (weeks != null) for (const it of t.items) must(!it.phases.some((f) => (f.toWeek ?? f.fromWeek) > weeks), `«${it.substance}» tiene fases más allá de la semana ${weeks}: alarga la duración`);
+    const out = [];
+    for (const [i, it] of t.items.entries()) {
+      const notes = [t.route && `Vía: ${t.route}`, t.durationText && `Duración del protocolo: ${t.durationText}`, t.restText && `Descanso / después: ${t.restText}`, it.notes, t.notes].filter(Boolean).join('\n');
+      out.push(await this.addPlan(profileId, { name: t.items.length > 1 ? `${t.name} — ${it.substance}` : t.name, productId: products[i] ?? it.productId ?? '',
+        mode: dur ? 'duracion' : 'pendiente', start: d.start, duration: dur, durationUnit: unit, phases: it.phases,
+        source: `Biblioteca: ${t.name}${t.source ? ' · ' + t.source : ''}`, enteredBy: 'Biblioteca de protocolos', templateId: t.id, notes }));
+    }
+    return out;
+  }
+}
+
+const SEXES = ['hombre', 'mujer', 'ambos'];
+export function validateLibrary(data) {
+  const errors = [], templates = [];
+  if (!data || data.tipo !== 'biblioteca-protocolos') return { errors: ['El archivo no es una biblioteca de protocolos'], templates };
+  if (!Array.isArray(data.templates) || !data.templates.length) return { errors: ['La biblioteca no contiene protocolos'], templates };
+  const ids = new Set();
+  for (const [i, t] of data.templates.entries()) {
+    const where = `Protocolo ${i + 1} (${t?.name || 'sin nombre'})`;
+    if (!t?.id || ids.has(t.id)) { errors.push(`${where}: identificador vacío o repetido`); continue; }
+    ids.add(t.id);
+    if (!t.name) errors.push(`${where}: falta el nombre`);
+    if (!SEXES.includes(t.sex)) errors.push(`${where}: sexo debe ser hombre, mujer o ambos`);
+    if (t.durationUnit && !['dias', 'semanas'].includes(t.durationUnit)) errors.push(`${where}: unidad de duración no válida`);
+    if (!Array.isArray(t.items) || !t.items.length) { errors.push(`${where}: no tiene sustancias`); continue; }
+    const items = [];
+    for (const it of t.items) {
+      if (!it.substance) errors.push(`${where}: sustancia sin nombre`);
+      try { items.push({ substance: it.substance || '', productId: it.productId || '', notes: it.notes || '', phases: parsePhases(it.phases || []) }); }
+      catch (e) { errors.push(`${where} · ${it.substance}: ${e.message}`); }
+    }
+    templates.push({ id: t.id, name: t.name, compound: t.compound || '', sex: t.sex, kind: t.items.length > 1 ? 'combinado' : 'sustancia', route: t.route || '',
+      durationText: t.durationText || '', durationMin: num(t.durationMin), durationMax: num(t.durationMax), durationUnit: t.durationUnit || 'semanas',
+      restText: t.restText || '', notes: t.notes || '', source: t.source || '', blocked: t.blocked || null, items });
+  }
+  return { errors, templates };
 }
 
 export function toCSV(rows) {
@@ -489,12 +574,7 @@ export function parseImportText(text, { profiles, products }) {
       else if (key === 'nota' || key === 'notas') plan.notes = val;
       else if (key === 'revision cada') { const n = parseInt(val, 10); if (n > 0) plan.reviewEveryDays = n; else errors.push('«Revisión cada» debe ser un número de días'); }
       else if (key === 'fase') {
-        const [w, amount = '', unit = '', frequency = '', note = ''] = val.split('|').map((x) => x.trim());
-        const wm = w.match(/(\d+)\s*[-–]\s*(\d+)/) || w.match(/(\d+)/);
-        if (!wm) { errors.push(`Fase «${val}»: indica las semanas, p. ej. «semanas 1-4»`); return; }
-        if (amount !== '' && Number.isNaN(Number(amount.replace(',', '.')))) { errors.push(`Fase «${val}»: la cantidad debe ser un número`); return; }
-        if (amount !== '' && !unit) { errors.push(`Fase «${val}»: falta la unidad`); return; }
-        plan.phases.push({ fromWeek: +wm[1], toWeek: +(wm[2] || wm[1]), amount: amount === '' ? null : Number(amount.replace(',', '.')), unit, frequency, note });
+        try { plan.phases.push(parsePhaseLine(val)); } catch (e) { errors.push(e.message); }
       } else errors.push(`Clave «${m[1]}» desconocida`);
     });
     if (!profile && !errors.some((e) => e.startsWith('Persona'))) errors.push('Falta «PERSONA:»');
@@ -505,7 +585,7 @@ export function parseImportText(text, { profiles, products }) {
     try { plan.phases = parsePhases(plan.phases); } catch (e) { errors.push(e.message); }
     if (plan.phases.length && (plan.duration || plan.end)) {
       const end = planEnd({ ...plan }); const weeks = Math.ceil((diffDays(plan.start, end) + 1) / 7);
-      if (plan.phases.some((f) => f.toWeek > weeks)) errors.push(`Hay fases que pasan de la semana ${weeks}, donde termina el plan`);
+      if (plan.phases.some((f) => (f.toWeek ?? f.fromWeek) > weeks)) errors.push(`Hay fases que pasan de la semana ${weeks}, donde termina el plan`);
     }
     return { index: bi + 1, profile, product, plan: { ...plan, productId: product?.id || '' }, errors };
   });

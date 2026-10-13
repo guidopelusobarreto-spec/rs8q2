@@ -1,6 +1,6 @@
 // Calendario, ciclos, postciclo, recordatorios, peso, hábitos, informes, incidencias y ajustes.
 import { esc, $, $$, opt, field, inp, toast, dialog, fmtDate, fmtNum, readForm, showErr, download, lineChart } from './ui.js';
-import { parseImportText, importPlans, PLAN_MODES, PCT_STATUS, PCT_UNDEFINED, REVIEW_DAYS, ADMIN_STATUS, planEnd, addDays, diffDays, todayISO, weightChange, toISODate } from './model.js';
+import { parseImportText, importPlans, parsePhaseLine, phaseText, PLAN_MODES, PCT_STATUS, PCT_UNDEFINED, REVIEW_DAYS, ADMIN_STATUS, planEnd, addDays, diffDays, todayISO, weightChange, toISODate } from './model.js';
 import { COLLECTIONS } from './store.js';
 import { WHO_ACTIVITY, EMERGENCY } from './safety.js';
 import { productOptions, alertBox, dehydration, DEHYDRATION_TEXT, ruoBadge } from './views1.js';
@@ -64,20 +64,15 @@ const planForm = (products, p = {}) => `
   <fieldset><legend>Cantidad documentada en el plan (opcional)</legend><p class="small muted">Solo se usa para avisar si un registro la supera con la misma unidad. La app no propone valores.</p>
   <div class="grid">${field('Cantidad del plan', inp('plannedAmount', p.plannedAmount ?? '', 'type="number" step="any" min="0"'))}${field('Unidad', inp('plannedUnit', p.plannedUnit || '', 'list="units2"') + '<datalist id="units2"><option value="mg"><option value="mcg"><option value="UI"><option value="ml"><option value="unidad"><option value="tableta"></datalist>')}</div></fieldset>
   <fieldset><legend>Fases del protocolo (las escribes tú)</legend>
-    <p class="small muted">Una fase por línea: <code>semanas 1-4 | cantidad | unidad | frecuencia | nota</code>. Ejemplo de formato: <code>semanas 1-4 | 1 | tableta | diaria | indicación de mi médico</code>. La app no propone valores; solo compara los registros con lo que escribas.</p>
-    <textarea name="phasesText" rows="4">${esc((p.phases || []).map((f) => `semanas ${f.fromWeek}-${f.toWeek} | ${f.amount ?? ''} | ${f.unit} | ${f.frequency} | ${f.note}`).join('\n'))}</textarea></fieldset>
+    <p class="small muted">Una fase por línea: <code>semanas 1-4 | cantidad | unidad | frecuencia | nota</code>. Rango: <code>2-2.5</code>; hasta el final: <code>semanas 9-fin</code>. Ejemplo de formato: <code>semanas 1-4 | 1 | tableta | diaria | indicación de mi médico</code>. La app no propone valores; solo compara los registros con lo que escribas.</p>
+    <textarea name="phasesText" rows="4">${esc((p.phases || []).map((f) => `semanas ${f.fromWeek}-${f.toWeek ?? 'fin'} | ${f.amount ?? ''}${f.amountMax != null ? '-' + f.amountMax : ''} | ${f.unit} | ${f.frequency} | ${f.note}`).join('\n'))}</textarea></fieldset>
   ${field('Pauta anotada (texto libre)', `<textarea name="scheduleNote">${esc(p.scheduleNote || '')}</textarea>`)}
   ${field('Revisión periódica cada (días; seguimiento continuo)', inp('reviewEveryDays', p.reviewEveryDays ?? '', 'type="number" min="1"'))}
   <div class="grid">${field('Fuente de la información', inp('source', p.source || ''))}${field('Introducido por', inp('enteredBy', p.enteredBy || ''))}</div>
   <fieldset><legend>Alertas</legend>${[['d7', '7 días antes'], ['d2', '2 días antes'], ['d0', 'El día final'], ['overdue', 'Tras vencer'], ['afterEnd', 'Registro posterior al final']].map(([k, l]) => `<label class="check"><input type="checkbox" name="al_${k}" ${p.alerts?.[k] === false ? '' : 'checked'}>${l}</label>`).join('')}</fieldset>
   ${field('Observaciones', `<textarea name="notes">${esc(p.notes || '')}</textarea>`)}`;
 export function parsePhaseText(t) {
-  return (t || '').split('\n').map((l) => l.trim()).filter(Boolean).map((l, i) => {
-    const [w, amount = '', unit = '', frequency = '', note = ''] = l.split('|').map((x) => x.trim());
-    const m = w.match(/(\d+)\s*[-–]\s*(\d+)/) || w.match(/(\d+)/);
-    if (!m) throw new Error(`Fase ${i + 1}: escribe las semanas como «semanas 1-4»`);
-    return { fromWeek: +m[1], toWeek: +(m[2] || m[1]), amount, unit, frequency, note };
-  });
+  return (t || '').split('\n').map((l) => l.trim()).filter(Boolean).map((l) => parsePhaseLine(l));
 }
 const planData = (d) => { d.phases = parsePhaseText(d.phasesText); delete d.phasesText; const alerts = {}; for (const k of ['d7', 'd2', 'd0', 'overdue', 'afterEnd']) { alerts[k] = !!d['al_' + k]; delete d['al_' + k]; } return { ...d, alerts }; };
 
@@ -118,7 +113,7 @@ export async function planDetalle(view, r, ctx) {
     <div class="card"><dl class="kv"><dt>Modalidad</dt><dd>${esc(PLAN_MODES[p.mode])}</dd><dt>Sustancia</dt><dd>${esc(prod?.substance || '—')}</dd>
       <dt>Inicio</dt><dd>${fmtDate(p.start)}</dd><dt>Fin</dt><dd>${end ? fmtDate(end) + (p.end ? '' : ' (calculado por duración)') : 'Sin fecha final registrada'}</dd>
       <dt>Cantidad del plan</dt><dd>${p.plannedAmount != null ? `${fmtNum(p.plannedAmount, 4)} ${esc(p.plannedUnit)}` : '—'}</dd><dt>Pauta anotada</dt><dd>${esc(p.scheduleNote || '—')}</dd>
-      <dt>Fases del protocolo</dt><dd>${p.phases?.length ? p.phases.map((f) => `Semanas ${f.fromWeek}–${f.toWeek}: ${f.amount != null ? fmtNum(f.amount, 4) : '—'} ${esc(f.unit)} · ${esc(f.frequency || '—')}${f.note ? ' · ' + esc(f.note) : ''}`).join('<br>') : '—'}</dd>
+      <dt>Fases del protocolo</dt><dd>${p.phases?.length ? p.phases.map((f) => esc(phaseText(f))).join('<br>') : '—'}</dd>
       <dt>Revisión periódica</dt><dd>${p.reviewEveryDays ? `cada ${p.reviewEveryDays} días · próxima ${fmtDate(nextReview)}` : '—'}</dd>
       <dt>Fuente</dt><dd>${esc(p.source || '—')}</dd><dt>Introducido por</dt><dd>${esc(p.enteredBy || '—')}</dd><dt>Registrado</dt><dd>${new Date(p.createdAt).toLocaleString('es-ES')}</dd></dl>
       <div class="row noprint" style="margin-top:.6rem"><button id="edit" class="sec">Editar</button>${lastReview ? `<button id="rev" class="sec">Marcar revisión del ${fmtDate(lastReview)} como hecha</button>` : ''}<button id="close" class="sec">${p.closed ? 'Reabrir' : 'Cerrar plan'}</button>
@@ -337,7 +332,7 @@ export async function informes(view, r, ctx) {
       <h3>Fuentes de la información de seguridad</h3><p class="small">${usedSources.length ? `Consulta la ficha de cada sustancia (${esc(usedSources.join(', '))}) en el catálogo; cada efecto adverso lleva su fuente y fecha de consulta.` : '—'}</p></div>` : ''}
     <div class="card noprint"><h2 style="margin-top:0">Exportar datos</h2>
       <div class="row"><button id="jsonP" class="sec">JSON de este perfil</button><button id="jsonA" class="sec">JSON de todos (copia completa)</button></div>
-      <div class="row" style="margin-top:.5rem"><select id="csvColl" style="max-width:16rem">${COLLECTIONS.filter((c) => !['settings', 'customProducts'].includes(c)).map((c) => opt(c, c, 'administrations')).join('')}</select><button id="csv" class="sec">CSV de este perfil</button></div>
+      <div class="row" style="margin-top:.5rem"><select id="csvColl" style="max-width:16rem">${COLLECTIONS.filter((c) => !['settings', 'customProducts', 'templates'].includes(c)).map((c) => opt(c, c, 'administrations')).join('')}</select><button id="csv" class="sec">CSV de este perfil</button></div>
       <p class="small muted">El CSV usa «;» como separador para abrirse bien en Excel en español. Incidencias registradas: ${incs.length}.</p></div>`;
   $('#flt').addEventListener('submit', (e) => { e.preventDefault(); const d = readForm(e.target); location.hash = '#/informes?' + new URLSearchParams(Object.entries(d).filter(([, v]) => v)).toString(); });
   $('#print')?.addEventListener('click', () => window.print());
@@ -404,7 +399,7 @@ export async function ajustes(view, r, ctx) {
   $('#bk').addEventListener('click', async () => download(`registro-copia-${todayISO()}.json`, JSON.stringify(await ctx.model.exportJSON(), null, 1), 'application/json'));
   $('#rs').addEventListener('change', async (e) => {
     const file = e.target.files[0]; if (!file) return;
-    try { const n = await ctx.model.importJSON(JSON.parse(await file.text()), { replace: $('#rsReplace').checked }); toast(`Restaurados ${n} registros`); await refreshProfiles(); }
+    try { const data = JSON.parse(await file.text()); if (data?.tipo === 'biblioteca-protocolos') { const n = await ctx.model.importLibrary(data); toast(`Era una biblioteca: ${n} modelos cargados en Biblioteca`); return; } const n = await ctx.model.importJSON(data, { replace: $('#rsReplace').checked }); toast(`Restaurados ${n} registros`); await refreshProfiles(); }
     catch (err) { toast('No se pudo restaurar: ' + err.message, 5000); }
     e.target.value = '';
   });
@@ -453,7 +448,7 @@ async function importDialog(ctx) {
         <h3 style="margin-top:0">Plan ${x.index}: ${esc(x.plan.name || '(sin nombre)')}</h3>
         <dl class="kv"><dt>Persona</dt><dd>${esc(x.profile?.name || '—')}</dd><dt>Sustancia</dt><dd>${esc(x.product ? `${x.product.substance} (${x.product.id})` : '—')}</dd>
         <dt>Inicio</dt><dd>${esc(x.plan.start || '—')}</dd><dt>Fin</dt><dd>${esc(planEnd(x.plan) || 'sin fecha final')}</dd><dt>Modalidad</dt><dd>${esc(PLAN_MODES[x.plan.mode] || x.plan.mode)}</dd>
-        <dt>Fases</dt><dd>${x.plan.phases.length ? x.plan.phases.map((f) => `Semanas ${f.fromWeek}–${f.toWeek}: ${f.amount ?? '—'} ${esc(f.unit)} · ${esc(f.frequency || '—')}`).join('<br>') : '—'}</dd></dl>
+        <dt>Fases</dt><dd>${x.plan.phases.length ? x.plan.phases.map((f) => esc(phaseText(f))).join('<br>') : '—'}</dd></dl>
         ${x.errors.length ? `<div class="alert seguridad">${x.errors.map(esc).join('<br>')}</div>` : '<p class="small">Sin errores.</p>'}</div>`).join('')
         + (bad ? '<p class="err">Corrige los errores y vuelve a pulsar Revisar.</p>' : '<p>Comprueba cada cifra y unidad antes de importar.</p>');
     });

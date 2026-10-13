@@ -98,3 +98,7 @@ dialog::backdrop { background: rgba(0,0,0,.45); }
   body { background: #fff; color: #000; } .card { border: 1px solid #999; break-inside: avoid; }
 }
 [hidden] { display: none !important; }
+details .tpl { padding: .6rem 0; margin: 0; border: 0; border-top: 1px solid var(--line, #ccc); border-radius: 0; box-shadow: none; background: transparent; }
+.tpl dl.kv { display: block; }
+.tpl dl.kv dt { font-weight: 600; margin-top: .3rem; }
+.tpl dl.kv dd { margin: 0; }

@@ -1,5 +1,5 @@
 """Pruebas de aceptación en Chromium (Playwright). Uso: python3 -I tests/e2e.py <url>"""
-import sys, json, datetime as dt
+import sys, os, json, datetime as dt
 from playwright.sync_api import sync_playwright, expect
 
 URL = sys.argv[1] if len(sys.argv) > 1 else 'http://localhost:8765/'
@@ -199,6 +199,21 @@ with sync_playwright() as p:
     page.fill('#pin', '2468'); page.click('#lockForm button'); page.wait_for_timeout(500)
     ok('PIN correcto desbloquea', page.locator('#lockForm').count() == 0)
 
+    # biblioteca de protocolos
+    go(page, '#/biblioteca'); page.wait_for_selector('h1')
+    page.set_input_files('#libFile', os.environ['LIB_FILE']); page.wait_for_timeout(600)
+    ok('biblioteca: carga el archivo (33 modelos)', '33 modelos' in page.inner_text('main'))
+    page.select_option('#sexSel', 'mujer'); page.wait_for_timeout(400)
+    ok('biblioteca: filtro mujeres oculta modelos de hombres', page.locator('.tpl[data-id="reta-h"]').count() == 0 and page.locator('.tpl[data-id="reta-m"]').count() == 1)
+    ok('biblioteca: modelo contraindicado sin botón Aplicar', page.locator('.tpl[data-id="rad-m"] .apply').count() == 0)
+    page.locator('details:has-text("Combinados")').first.locator('summary').click()
+    page.locator('.tpl[data-id="comb-m"] .apply').click(); page.wait_for_timeout(300)
+    page.select_option('dialog[open] [name=profileId]', label='Ana')
+    ok('biblioteca: duración fija precargada (16)', page.input_value('dialog[open] [name=duration]') == '16')
+    page.click('dialog[open] button:has-text("Crear planes")'); page.wait_for_timeout(800)
+    go(page, '#/planes'); page.wait_for_timeout(300)
+    ok('biblioteca: crea los 4 planes del combinado', page.locator('main a:has-text("Protocolo femenino combinado")').count() == 4)
+
     # importador de texto
     go(page, '#/planes'); page.wait_for_timeout(200); page.click('#imp')
     page.fill('#impTxt', 'PLAN: Malo\nPERSONA: Nadie\nSUSTANCIA: reta15\nCOSA RARA')
@@ -212,7 +227,7 @@ with sync_playwright() as p:
 
     # anchos 320 y 360: sin desbordamiento horizontal
     routes = ['#/', '#/registro', '#/historial', f'#/calendario?v=mes&d={iso(today)}', '#/planes', '#/pct', '#/recordatorios', '#/peso',
-              '#/habitos', f'#/informes?from={iso(today - dt.timedelta(days=28))}&to={iso(today)}', '#/incidencias', '#/catalogo', '#/producto/reta15', '#/perfiles', '#/ajustes']
+              '#/habitos', f'#/informes?from={iso(today - dt.timedelta(days=28))}&to={iso(today)}', '#/incidencias', '#/catalogo', '#/producto/reta15', '#/perfiles', '#/ajustes', '#/biblioteca', '#/biblioteca?s=hombre']
     for w in (320, 360):
         page.set_viewport_size({'width': w, 'height': 760})
         bad = []

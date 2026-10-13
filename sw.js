@@ -1,7 +1,7 @@
 // Service worker: funciona sin conexión y gestiona avisos.
-const CACHE = 'registro-v4';
+const CACHE = 'registro-v5';
 const ASSETS = ['./', 'index.html', 'styles.css', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png',
-  'js/app.js', 'js/ui.js', 'js/model.js', 'js/store.js', 'js/catalog.js', 'js/safety.js', 'js/notify.js', 'js/views1.js', 'js/views2.js'];
+  'js/app.js', 'js/ui.js', 'js/model.js', 'js/store.js', 'js/catalog.js', 'js/safety.js', 'js/notify.js', 'js/views1.js', 'js/views2.js', 'js/views3.js'];
 
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => {
