@@ -326,13 +326,13 @@ test('biblioteca: valida, importa el archivo del usuario y aplica creando planes
   assert.equal(await m.importLibrary(lib), lib.templates.length);
   const ana = await m.createProfile({ name: 'Ana' });
   const plans = await m.applyTemplate(ana.id, 'comb-m', { start: '2026-11-02', duration: 16 });
-  assert.equal(plans.length, 4);
+  assert.equal(plans.length, 6);
   const reta = plans[0];
   assert.equal(reta.duration, 16); assert.equal(reta.mode, 'duracion');
-  // semana 6: rango 2–2.5 mg; 2.5 no supera, 3 sí
-  const ok = (await m.addAdministration(ana.id, { productId: 'reta15', planId: reta.id, date: '2026-12-08', time: '09:00', amount: 2.5, unit: 'mg', status: 'realizado' })).check;
+  // semana 6: 2 mg; 2 no supera, 2.5 sí
+  const ok = (await m.addAdministration(ana.id, { productId: 'reta15', planId: reta.id, date: '2026-12-08', time: '09:00', amount: 2, unit: 'mg', status: 'realizado' })).check;
   assert.equal(ok.exceeded, false);
-  const bad = (await m.addAdministration(ana.id, { productId: 'reta15', planId: reta.id, date: '2026-12-08', time: '10:00', amount: 3, unit: 'mg', status: 'realizado' })).check;
+  const bad = (await m.addAdministration(ana.id, { productId: 'reta15', planId: reta.id, date: '2026-12-08', time: '10:00', amount: 2.5, unit: 'mg', status: 'realizado' })).check;
   assert.equal(bad.exceeded, true);
   await assert.rejects(() => m.applyTemplate(ana.id, 'rad-m', { start: '2026-11-02' }), /Contraindicado/);
   await assert.rejects(() => m.applyTemplate(ana.id, 'tb500', { start: '2026-11-02', duration: 6 }), /semana 6/);
@@ -356,15 +356,24 @@ test('compatibilidad: avisa de combinaciones prohibidas y de precaución el mism
   const b = await m.createProfile({ name: 'Bruno' });
   await m.applyTemplate(b.id, 'rad-h', { start: '2026-11-02', duration: 8 });
   const w = await m.compatCheck(b.id, { items: [{ productId: 'lgd10' }], from: '2026-11-10', to: '2026-12-10' });
-  assert.equal(w[0].tipo, 'prohibida'); assert.match(w[0].combinacion, /RAD-140 \+ LGD-4033/);
+  assert.equal(w[0].tipo, 'prohibida'); assert.match(w[0].combinacion, /SARM único/);
   assert.equal((await m.compatCheck(b.id, { items: [{ productId: 'lgd10' }], from: '2027-03-01', to: '2027-04-01' })).length, 0);
   // dentro del mismo protocolo nuevo
   const self = await m.compatCheck(b.id, { items: [{ productId: 'osta25' }, { productId: 'lgd10' }], from: '2027-03-01', to: '2027-04-01' });
   assert.equal(self[0].tipo, 'prohibida');
   // PT-141 + Kisspeptin: solo el mismo día
   await m.addAdministration(b.id, { productId: 'kiss10', date: '2027-05-03', time: '09:00', amount: 150, unit: 'mcg', status: 'realizado' });
-  assert.equal((await m.compatCheck(b.id, { items: [{ productId: 'pt141' }], from: '2027-05-03', to: '2027-05-03' }))[0].tipo, 'precaucion');
+  assert.equal((await m.compatCheck(b.id, { items: [{ productId: 'pt141' }], from: '2027-05-03', to: '2027-05-03' }))[0].tipo, 'prohibida');
   assert.equal((await m.compatCheck(b.id, { items: [{ productId: 'pt141' }], from: '2027-05-05', to: '2027-05-05' })).length, 0);
+  // Kisspeptin (semanas 3-8) y Clomid (14-17) del combinado masculino no chocan entre sí; Clomid en la semana 5 sí
+  const { activeWindow } = await import('../js/model.js');
+  const c = await m.createProfile({ name: 'Carlos' });
+  const comb = await m.applyTemplate(c.id, 'comb-h', { start: '2027-01-04', duration: 17 });
+  assert.equal(comb.length, 8);
+  const kiss = comb.find((p) => p.productId === 'kiss10');
+  assert.deepEqual(activeWindow(kiss), { from: '2027-01-18', to: '2027-02-28' });
+  assert.equal((await m.compatCheck(c.id, { items: [{ productId: 'clomi50' }], from: '2027-04-12', to: '2027-04-12' })).length, 0);
+  assert.equal((await m.compatCheck(c.id, { items: [{ productId: 'clomi50' }], from: '2027-02-01', to: '2027-02-01' }))[0].tipo, 'prohibida');
   // los textos originales se guardan y exportan
   const info = await m.libraryInfo();
   assert.match(info.texts['RAD-140 (testolona)'], /Contraindicado/);

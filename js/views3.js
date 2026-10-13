@@ -1,6 +1,6 @@
 // Biblioteca de protocolos: modelos escritos por el usuario. Aplicar uno crea planes editables para una persona.
 import { esc, $, $$, opt, field, inp, toast, dialog, download } from './ui.js';
-import { phaseText, todayISO } from './model.js';
+import { phaseText, todayISO, phasesWindow } from './model.js';
 import { productOptions, ruoBadge } from './views1.js';
 import { saveUI, refreshProfiles } from './app.js';
 
@@ -71,7 +71,7 @@ async function applyDialog(ctx, t, products, profiles) {
   const dur = Number(data.duration) || 0;
   const days = dur ? (t.durationUnit === 'dias' ? dur : dur * 7) - 1 : null;
   const to = days != null && data.start ? new Date(new Date(data.start + 'T12:00:00').getTime() + days * 864e5).toISOString().slice(0, 10) : null;
-  const warns = data.start ? await ctx.model.compatCheck(data.profileId, { items: t.items.map((it, i) => ({ productId: products2[i], text: it.substance, label: it.substance })), from: data.start, to }) : [];
+  const warns = data.start ? await ctx.model.compatCheck(data.profileId, { items: t.items.map((it, i) => ({ productId: products2[i], text: it.substance, label: it.substance, ...phasesWindow(data.start, it.phases, to) })), from: data.start, to }) : [];
   if (warns.length && !(await confirmCompat(warns))) return;
   let plans;
   try { plans = await ctx.model.applyTemplate(data.profileId, t.id, { start: data.start, duration: data.duration, products: products2 }); }

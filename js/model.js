@@ -498,28 +498,28 @@ export class Model {
     if (!rules.length) return [];
     const name = (k) => info.substances.find((s) => s.key === k)?.nombre || k;
     const newKeys = [];
-    for (const it of items) for (const k of await this.substanceKeys(it, info)) newKeys.push({ k, label: it.label || name(k) });
+    for (const it of items) for (const k of await this.substanceKeys(it, info)) newKeys.push({ k, label: it.label || name(k), from: it.from || from, to: it.to === undefined ? to : it.to });
     const existing = [];
     for (const pl of await this.list('plans', profileId)) {
       if (pl.closed || excludePlanIds.includes(pl.id)) continue;
-      const end = planEnd(pl) || '9999-12-31';
-      if (pl.start > (to || '9999-12-31') || end < from) continue;
-      for (const k of await this.substanceKeys({ productId: pl.productId, text: pl.name }, info)) existing.push({ k, label: `plan «${pl.name || name(k)}» (${esD(pl.start)} → ${planEnd(pl) ? esD(planEnd(pl)) : 'sin fin'})`, day: null });
+      const w = activeWindow(pl);
+      if (!overlaps(w.from, w.to, from, to)) continue;
+      for (const k of await this.substanceKeys({ productId: pl.productId, text: pl.name }, info)) existing.push({ k, label: `plan «${pl.name || name(k)}» (uso ${esD(w.from)} → ${w.to ? esD(w.to) : 'sin fin'})`, day: null, from: w.from, to: w.to });
     }
     for (const a of await this.list('administrations', profileId)) {
       if (a.date < from || a.date > (to || '9999-12-31') || ['omitido', 'cancelado'].includes(a.status)) continue;
-      for (const k of await this.substanceKeys({ productId: a.productId }, info)) existing.push({ k, label: `toma del ${esD(a.date)}`, day: a.date });
+      for (const k of await this.substanceKeys({ productId: a.productId }, info)) existing.push({ k, label: `toma del ${esD(a.date)}`, day: a.date, from: a.date, to: a.date });
     }
     const out = [], seen = new Set();
-    const pair = (x, y, r) => (r.a.includes(x) && r.b.includes(y)) || (r.b.includes(x) && r.a.includes(y));
+    const pair = (x, y, r) => x !== y && ((r.a.includes(x) && r.b.includes(y)) || (r.b.includes(x) && r.a.includes(y)));
     for (const r of rules) {
       for (const [i, n] of newKeys.entries()) {
-        for (const e of existing) if (pair(n.k, e.k, r)) {
-          if (r.mismoDia && from === to && e.day && e.day !== from) continue;
+        for (const e of existing) if (pair(n.k, e.k, r) && overlaps(n.from, n.to, e.from, e.to)) {
+          if (r.mismoDia && !(from === to && e.day === from)) continue; // regla «mismo día»: solo tomas de ese día
           const key = r.combinacion + n.label + e.label;
           if (!seen.has(key)) { seen.add(key); out.push({ tipo: r.tipo, combinacion: r.combinacion, nivel: r.nivel, motivo: r.motivo, nuevo: n.label, con: e.label }); }
         }
-        for (const m of newKeys.slice(i + 1)) if (pair(n.k, m.k, r)) {
+        if (!r.mismoDia) for (const m of newKeys.slice(i + 1)) if (pair(n.k, m.k, r) && overlaps(n.from, n.to, m.from, m.to)) {
           const key = r.combinacion + n.label + m.label;
           if (!seen.has(key)) { seen.add(key); out.push({ tipo: r.tipo, combinacion: r.combinacion, nivel: r.nivel, motivo: r.motivo, nuevo: n.label, con: m.label }); }
         }
@@ -552,6 +552,17 @@ export class Model {
 }
 
 const SEXES = ['hombre', 'mujer', 'ambos'];
+// Periodo de uso real de un plan: si sus fases tienen semanas cerradas, solo esas semanas; si no, inicio → fin del plan.
+export function activeWindow(pl) {
+  const end = planEnd(pl) || null;
+  const ph = pl.phases || [];
+  if (!ph.length) return { from: pl.start, to: end };
+  const a = Math.min(...ph.map((f) => f.fromWeek)), open = ph.some((f) => f.toWeek == null);
+  const b = Math.max(...ph.map((f) => f.toWeek ?? 0));
+  return { from: addDays(pl.start, (a - 1) * 7), to: open ? end : addDays(pl.start, b * 7 - 1) };
+}
+export function phasesWindow(start, phases, end) { return activeWindow({ start, phases, end }); }
+const overlaps = (a1, b1, a2, b2) => a1 <= (b2 || '9999-12-31') && a2 <= (b1 || '9999-12-31');
 const esD = (d) => d.split('-').reverse().join('/');
 const normTxt = (x) => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
 export function validateLibrary(data) {

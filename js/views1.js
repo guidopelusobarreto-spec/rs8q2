@@ -16,7 +16,7 @@ export const dehydration = (txt) => /diarr|v[oó]mit/i.test(txt || '');
 export const DEHYDRATION_TEXT = 'Se han registrado diarrea o vómitos: vigila signos de deshidratación (sed intensa, orina escasa u oscura, mareo, boca seca) y busca orientación sanitaria si los síntomas persisten o son importantes.';
 
 export function productOptions(products, sel, { all = true } = {}) {
-  const groups = [['plan', 'Plan actual'], ['alternativa', 'Alternativas aceptadas'], ['adicional', 'Productos adicionales'], ['custom', 'Añadidos por ti'], ['historico', 'Planes anteriores'], ['mercado', 'Vistas solo en ofertas']];
+  const groups = [['plan', 'Plan actual'], ['alternativa', 'Alternativas aceptadas'], ['adicional', 'Productos adicionales'], ['protocolo', 'De tu protocolo'], ['custom', 'Añadidos por ti'], ['historico', 'Planes anteriores'], ['mercado', 'Vistas solo en ofertas']];
   return (all ? '<option value="">— Elige —</option>' : '') + groups.map(([g, l]) => {
     const ps = products.filter((p) => p.status === g);
     return ps.length ? `<optgroup label="${esc(l)}">${ps.map((p) => opt(p.id, `${p.substance} · ${presentation(p)}`, sel)).join('')}</optgroup>` : '';

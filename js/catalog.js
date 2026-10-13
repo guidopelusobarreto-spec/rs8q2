@@ -58,13 +58,22 @@ export const CATALOG = [
   k({ id: 'foligtri', substance: 'Minoxidil 5 % + trioxidil 5 % (Foligain)', active: 'Minoxidil + trioxidil', brands: ['Foligain'], category: 'topico', form: 'Solución tópica', unitLabel: 'frasco', unitContentUnit: 'ml', unitContent: 59, unitsPerPack: 1, concentration: 'Minoxidil 5 % + trioxidil 5 % (declarado)', status: 'adicional', source: 'Control ronda 11-Oct-2026 C fila 11', confidence: 'media', review: ['Fórmula distinta de los otros Foligain'] }),
   k({ id: 'ghk10', substance: 'GHK-Cu concentrado cosmético 5 %', active: 'Copper Tripeptide-1', brands: ['Ellemental M-1721'], category: 'cosmetico', form: 'Concentrado para formulación', unitLabel: 'envase', unitContentUnit: 'g', unitContent: 10, unitsPerPack: 1, concentration: '5 % (50.000 ppm, declarado)', status: 'adicional', source: 'Cosméticos UE 11-Oct-2026 fila 4', confidence: 'media', review: ['El 5 % se asume masa/masa en el libro; no confirmado', 'Ingrediente para formular, no producto terminado'] }),
   k({ id: 'ghk100', substance: 'GHK-Cu concentrado cosmético 5 %', active: 'Copper Tripeptide-1', brands: ['Ellemental M-1721-0.1'], category: 'cosmetico', form: 'Concentrado para formulación', unitLabel: 'envase', unitContentUnit: 'g', unitContent: 100, unitsPerPack: 1, concentration: '5 % (50.000 ppm, declarado)', status: 'adicional', source: 'Cosméticos UE 11-Oct-2026 fila 5', confidence: 'media', review: ['El 5 % se asume masa/masa en el libro; no confirmado'] }),
+  // ── De tu protocolo (13-oct-2026): presentaciones que no están en la tabla maestra ──
+  k({ id: 'rad10', substance: 'RAD-140 (testolona)', active: 'Testolona (RAD-140)', category: 'sarm', form: 'Tableta o líquido oral', unitLabel: 'dosis', unitContent: 10, unitsPerPack: null, status: 'protocolo', research: RUO, source: 'Protocolo del usuario, ficha 8', confidence: 'baja', review: ['Presentación según tu texto: «Tabletas o líquido oral, 10 mg/dosis»; envase sin especificar'] }),
+  k({ id: 'osta10', substance: 'Ostarina (MK-2866)', active: 'Enobosarm', category: 'sarm', form: 'Tableta', unitLabel: 'tableta', unitContent: 10, unitsPerPack: null, status: 'protocolo', research: RUO, source: 'Protocolo del usuario, ficha 9', confidence: 'baja', review: ['Envase sin especificar en tu texto'] }),
+  k({ id: 'ghk50i', substance: 'GHK-Cu inyectable', active: 'Tripéptido de cobre (GHK-Cu)', category: 'peptido', form: 'Vial liofilizado', unitContent: 50, unitsPerPack: 10, status: 'protocolo', research: RUO, source: 'Protocolo del usuario, ficha 16', confidence: 'baja' }),
+  k({ id: 'amq50cap', substance: '5-Amino-1MQ', active: '5-Amino-1-metilquinolinio', category: 'peptido', form: 'Cápsula oral', unitLabel: 'cápsula', unitContent: 50, unitsPerPack: null, status: 'protocolo', research: RUO, source: 'Protocolo del usuario, ficha 22', confidence: 'baja', review: ['Envase sin especificar en tu texto'] }),
+  k({ id: 'citru500', substance: 'L-Citrulina', active: 'L-Citrulina', category: 'suplemento', form: 'Polvo', unitLabel: 'bote', unitContentUnit: 'g', unitContent: 500, unitsPerPack: 1, status: 'protocolo', source: 'Protocolo del usuario, ficha 12', confidence: 'media', review: ['Tu texto también menciona bote de 1 kg'] }),
+  k({ id: 'crea500', substance: 'Creatina monohidrato', active: 'Creatina monohidrato micronizada', category: 'suplemento', form: 'Polvo', unitLabel: 'bote', unitContentUnit: 'g', unitContent: 500, unitsPerPack: 1, status: 'protocolo', source: 'Protocolo del usuario, ficha 13', confidence: 'media' }),
+  k({ id: 'd3k2', substance: 'Vitamina D3 + K2 (MK-7)', active: 'Colecalciferol + menaquinona-7', category: 'suplemento', form: 'Cápsula combinada', unitLabel: 'cápsula', unitContent: null, unitsPerPack: null, concentration: '5000 UI D3 + 100 mcg K2 por cápsula (declarado en tu texto)', status: 'protocolo', source: 'Protocolo del usuario, ficha 14', confidence: 'media' }),
+  k({ id: 'electro', substance: 'Electrolitos (sodio + potasio + magnesio)', active: 'Sales de sodio, potasio y citrato de magnesio', category: 'suplemento', form: 'Polvo sin azúcar o cápsulas', unitLabel: 'toma', unitContent: null, unitsPerPack: null, concentration: '500 mg Na + 200 mg K + 200 mg citrato de Mg por toma (según tu texto)', status: 'protocolo', source: 'Protocolo del usuario, ficha 15', confidence: 'media' }),
 ];
 
 export const CATEGORY_LABEL = {
   peptido: 'Péptido / vial de investigación', sarm: 'SARM (investigación)', oral: 'Oral', combinacion: 'Combinación oral',
-  topico: 'Tópico', cosmetico: 'Cosmético', custom: 'Añadido por el usuario',
+  topico: 'Tópico', cosmetico: 'Cosmético', suplemento: 'Suplemento / nutriente', custom: 'Añadido por el usuario',
 };
-export const STATUS_LABEL = { plan: 'Plan actual', alternativa: 'Alternativa aceptada', historico: 'Plan anterior', mercado: 'Vista en ofertas', adicional: 'Producto adicional', custom: 'Añadido por el usuario' };
+export const STATUS_LABEL = { plan: 'Plan actual', alternativa: 'Alternativa aceptada', historico: 'Plan anterior', mercado: 'Vista en ofertas', adicional: 'Producto adicional', protocolo: 'De tu protocolo', custom: 'Añadido por el usuario' };
 export const RUO_LABEL = 'Sustancia de investigación — no apta para uso humano';
 
 // Entradas del libro que NO se importan como presentación (registradas en la auditoría):
@@ -81,6 +90,7 @@ export function totalActive(p) {
 }
 export function presentation(p) {
   const fmt = (n) => String(n).replace('.', ',');
-  if (p.unitContent == null) return `${p.unitsPerPack ?? '?'} ${p.unitLabel === 'vial' ? 'viales' : p.unitLabel + 's'} — ${p.active}`;
+  if (p.unitContent == null) return `${p.unitsPerPack != null ? p.unitsPerPack + ' ' + (p.unitLabel === 'vial' ? 'viales' : p.unitLabel + 's') + ' — ' : ''}${p.concentration || p.active}`;
+  if (p.unitsPerPack == null) return `${fmt(p.unitContent)} ${p.unitContentUnit}/${p.unitLabel} · envase sin especificar`;
   return `${fmt(p.unitContent)} ${p.unitContentUnit}/${p.unitLabel} × ${p.unitsPerPack}${p.concentration ? ' · ' + p.concentration : ''}`;
 }
