@@ -1,5 +1,6 @@
 // Bloqueo con PIN, notificaciones y exportación de recordatorios a calendario (.ics).
 import { occurrences, todayISO, addDays } from './model.js';
+import { MOMENTS } from './schedule.js';
 
 // ── PIN ── (hash SHA-256 con sal; impide abrir la app, pero los datos del navegador NO están cifrados)
 const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -42,6 +43,18 @@ export async function checkDue(model, store, now = new Date()) {
         await reg.showNotification(r.label, { body: `${p.name} · ${o.time}. Confírmalo en la app; el aviso no marca nada como realizado.`, tag: key, data: { url: `./#/registro?rem=${r.id}&p=${p.id}` } });
         keys.add(snoozeKey); n++;
       }
+    }
+  }
+  // Tomas previstas por los protocolos (solo las que tienen hora o momento del día). Texto genérico en la pantalla de bloqueo.
+  for (const p of profiles) for (const s of (await model.agenda(p.id, t)).slots) {
+    if (s.status !== 'pending' && s.status !== 'snoozed') continue;
+    const hhmm = s.time || MOMENTS[s.moment]?.at;
+    if (!hhmm) continue;
+    const at = s.status === 'snoozed' ? new Date(s.snoozedUntil) : new Date(`${t}T${hhmm}:00`);
+    const key = `${s.key}@${at.toISOString()}`, late = now - at;
+    if (late >= 0 && late < 15 * 60000 && !keys.has(key)) {
+      await reg.showNotification('Tienes una toma pendiente', { body: `${p.name} · ${s.time || MOMENTS[s.moment].label}. Ábrela en «Hoy».`, tag: key, data: { url: './#/' } });
+      keys.add(key); n++;
     }
   }
   await store.put('settings', { id: 'notified', keys: [...keys].slice(-500) });

@@ -1,6 +1,7 @@
 // Lógica de la app, independiente de la interfaz. Todo registro lleva profileId y se filtra por él.
 import { CATALOG, RUO_LABEL } from './catalog.js';
 import { COLLECTIONS } from './store.js';
+import { buildAgenda, amountText } from './schedule.js';
 
 export const ADMIN_STATUS = { realizado: 'Realizado', omitido: 'Omitido', retrasado: 'Retrasado', cancelado: 'Cancelado', pendiente: 'Pendiente de confirmar' };
 export const PLAN_MODES = {
@@ -225,7 +226,8 @@ export class Model {
     const rec = { productId: d.productId || '', name: d.name || '', mode: d.mode, start: d.start, end: d.end || '',
       duration: num(d.duration), durationUnit: d.durationUnit || 'dias', plannedAmount: num(d.plannedAmount), plannedUnit: d.plannedUnit || '', phases: parsePhases(d.phases),
       scheduleNote: d.scheduleNote || '', reviewEveryDays: num(d.reviewEveryDays), source: d.source || '', enteredBy: d.enteredBy || '',
-      alerts: { d7: true, d2: true, d0: true, overdue: true, afterEnd: true, ...(d.alerts || {}) }, notes: d.notes || '' };
+      alerts: { d7: true, d2: true, d0: true, overdue: true, afterEnd: true, ...(d.alerts || {}) }, notes: d.notes || '',
+      templateId: d.templateId || '', substance: d.substance || '' };
     rec.computedEnd = planEnd(rec);
     return this._add('plans', profileId, rec);
   }
@@ -389,11 +391,56 @@ export class Model {
       if (x.reviewDate) add(x.reviewDate, 'pct', 'Revisión postciclo', x.id);
       for (const d of x.dates || []) add(d.date, 'pct', d.label || 'Fecha postciclo', x.id);
     }
+    const plans = await this.list('plans', profileId), admins = await this.list('administrations', profileId), t = this.today();
+    const labels = await this.planLabels(plans), label = async (pl) => labels.get(pl.id);
+    for (let d = from; d <= to; d = addDays(d, 1)) {
+      const ag = buildAgenda({ plans, admins, date: d });
+      for (const s of ag.slots) if (s.status !== 'done' && s.status !== 'omitted') add(d, d >= t ? 'prevista' : 'sinregistro', `${await label(s.plan)} ${amountText(s.phase)}`.trim(), s.plan.id, s.time);
+      for (const w of ag.weekly) {
+        if (w.count >= w.needed) continue;
+        if (d === w.weekStart && w.weekEnd >= t) add(d, 'prevista', `${await label(w.plan)} ${amountText(w.phase)} · ${w.needed} esta semana (${w.count} hechas)`, w.plan.id);
+        if (d === w.weekEnd && d < t) add(d, 'sinregistro', `${await label(w.plan)}: ${w.count} de ${w.needed} esa semana`, w.plan.id);
+      }
+    }
     for (const w of await this.list('weights', profileId)) add(w.date, 'peso', `${w.kg} kg`, w.id);
     for (const e of await this.list('events', profileId)) add(e.date, 'evento', e.title, e.id, e.time);
     for (const i of await this.list('incidents', profileId)) add((i.when || i.createdAt).slice(0, 10), 'incidencia', i.label, i.id);
     for (const a of await this.list('administrations', profileId)) if (a.symptoms || a.adverse) add(a.date, 'sintoma', a.symptoms || a.adverse, a.id, a.time);
     return items.sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
+  }
+
+  // Nombre de la sustancia de cada plan: la del plan, la del producto o la del modelo de la biblioteca.
+  async planLabels(plans) {
+    const products = await this.products(), templates = await this.store.all('templates'), out = new Map();
+    for (const p of plans) {
+      // los planes antiguos no guardaban el modelo: se reconoce por «Biblioteca: <nombre del modelo>» en la fuente
+      const t = templates.find((x) => x.id === p.templateId) || templates.find((x) => (p.source || '').startsWith(`Biblioteca: ${x.name}`));
+      const seg = (p.name || '').split(' — ');
+      const l = p.substance || (t ? (t.items.length > 1 ? seg.pop() : t.compound || t.items[0]?.substance) : '');
+      out.set(p.id, l || products.find((x) => x.id === p.productId)?.substance || p.name || 'Plan sin nombre');
+    }
+    return out;
+  }
+  // ── pantalla Hoy ──
+  async agenda(profileId, date = this.today()) {
+    const sn = await this.store.get('settings', 'snooze-' + profileId);
+    return buildAgenda({ plans: await this.list('plans', profileId), admins: await this.list('administrations', profileId), date, snoozes: sn?.map || {}, now: this.now().toISOString() });
+  }
+  async snooze(profileId, key, minutes) {
+    const id = 'snooze-' + profileId, now = this.now().toISOString();
+    const cur = (await this.store.get('settings', id)) || { id, map: {} };
+    for (const [k, v] of Object.entries(cur.map)) if (v < now) delete cur.map[k];
+    cur.map[key] = new Date(this.now().getTime() + minutes * 60000).toISOString();
+    await this.store.put('settings', cur);
+    return cur.map[key];
+  }
+  // Corrección de la frecuencia leída, por plan y por texto literal (si el texto cambia, la corrección deja de aplicarse).
+  async setFrequency(profileId, planId, text, sched) {
+    const p = await this.store.get('plans', planId);
+    must(p && p.profileId === profileId, 'Plan inexistente o de otro perfil');
+    const map = { ...(p.freqOverrides || {}) };
+    if (sched) map[text] = sched; else delete map[text];
+    return this._update('plans', planId, { freqOverrides: map }, profileId);
   }
 
   // ── informe 7/14/21/28 días (o cualquier periodo) ──
@@ -544,7 +591,7 @@ export class Model {
     for (const [i, it] of t.items.entries()) {
       const notes = [t.route && `Vía: ${t.route}`, t.durationText && `Duración del protocolo: ${t.durationText}`, t.restText && `Descanso / después: ${t.restText}`, it.notes, t.notes].filter(Boolean).join('\n');
       out.push(await this.addPlan(profileId, { name: t.items.length > 1 ? `${t.name} — ${it.substance}` : t.name, productId: products[i] ?? it.productId ?? '',
-        mode: dur ? 'duracion' : 'pendiente', start: d.start, duration: dur, durationUnit: unit, phases: it.phases,
+        mode: dur ? 'duracion' : 'pendiente', substance: it.substance, start: d.start, duration: dur, durationUnit: unit, phases: it.phases,
         source: `Biblioteca: ${t.name}${t.source ? ' · ' + t.source : ''}`, enteredBy: 'Biblioteca de protocolos', templateId: t.id, notes }));
     }
     return out;

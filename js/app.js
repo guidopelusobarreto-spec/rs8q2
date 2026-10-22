@@ -6,15 +6,27 @@ import * as V1 from './views1.js';
 import * as V2 from './views2.js';
 import * as V3 from './views3.js';
 
-const MENU = [
-  ['', 'Panel'], ['registro', 'Registrar'], ['historial', 'Historial'], ['calendario', 'Calendario'], ['planes', 'Ciclos y periodos'], ['biblioteca', 'Biblioteca'],
-  ['pct', 'Postciclo'], ['recordatorios', 'Recordatorios'], ['peso', 'Peso'], ['habitos', 'Hábitos'], ['informes', 'Informes'],
-  ['incidencias', 'Incidencias'], ['catalogo', 'Catálogo'], ['perfiles', 'Perfiles'], ['ajustes', 'Ajustes'],
+import * as H from './hoy.js';
+
+// Barra inferior: 5 pestañas. Cada pestaña agrupa rutas; algunas tienen apartados (fila de chips).
+const I = (d) => `<svg viewBox="0 0 24 24" aria-hidden="true">${d}</svg>`;
+const TABS = [
+  ['', 'Hoy', I('<circle cx="12" cy="12" r="9"/><path d="M8 12.5l2.7 2.7L16.5 9"/>'), ['', 'registro']],
+  ['calendario', 'Calendario', I('<rect x="3.5" y="5" width="17" height="15.5" rx="2"/><path d="M3.5 10h17M8 3v4M16 3v4"/>'), ['calendario']],
+  ['protocolos', 'Protocolos', I('<rect x="5" y="4" width="14" height="17" rx="2"/><path d="M9 4V3h6v1M8.5 10h7M8.5 14h7M8.5 18h4"/>'), ['protocolos', 'planes', 'plan', 'biblioteca', 'ficha', 'texto', 'pct']],
+  ['historial', 'Progreso', I('<path d="M4 19h16"/><path d="M5 15l4-4 3 3 6-7"/>'), ['historial', 'peso', 'habitos', 'informes', 'incidencias', 'avisos']],
+  ['mas', 'Más', I('<circle cx="5.5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="18.5" cy="12" r="1.6"/>'), ['mas', 'recordatorios', 'catalogo', 'producto', 'perfiles', 'ajustes', 'acerca']],
 ];
+const SUB = {
+  protocolos: [['protocolos', 'Cronograma'], ['planes', 'Planes'], ['biblioteca', 'Biblioteca'], ['pct', 'Postciclo']],
+  historial: [['historial', 'Historial'], ['peso', 'Peso'], ['habitos', 'Hábitos'], ['informes', 'Informes'], ['incidencias', 'Incidencias'], ['avisos', 'Avisos']],
+};
+const SUB_OF = { plan: 'planes', ficha: 'biblioteca', texto: 'biblioteca' };
 const ROUTES = {
-  '': V1.panel, registro: V1.registro, historial: V1.historial, catalogo: V1.catalogo, producto: V1.producto, perfiles: V1.perfiles,
+  '': H.hoy, registro: V1.registro, avisos: V1.panel, historial: V1.historial, catalogo: V1.catalogo, producto: V1.producto, perfiles: V1.perfiles,
   calendario: V2.calendario, planes: V2.planes, plan: V2.planDetalle, pct: V2.pct, recordatorios: V2.recordatorios, peso: V2.peso,
   habitos: V2.habitos, biblioteca: V3.biblioteca, informes: V2.informes, incidencias: V2.incidencias, ajustes: V2.ajustes,
+  protocolos: H.protocolos, ficha: H.ficha, texto: H.texto, mas: H.mas, acerca: H.acerca,
 };
 
 export const ctx = { store: null, model: null, profileId: null, ui: null, locked: false, lastActive: Date.now() };
@@ -31,7 +43,7 @@ export async function refreshProfiles() {
   const list = await ctx.model.profiles();
   if (!list.find((p) => p.id === ctx.profileId)) ctx.profileId = list[0]?.id || null;
   if (ctx.ui.profileId !== ctx.profileId) await saveUI({ profileId: ctx.profileId });
-  $('#profileSel').innerHTML = list.length ? list.map((p) => opt(p.id, p.name, ctx.profileId)).join('') : '<option value="">(sin perfiles)</option>';
+  $('#profileSel').innerHTML = list.length ? list.map((p) => opt(p.id, p.name, ctx.profileId)).join('') : '<option value="">Sin perfiles</option>';
 }
 
 function parseHash() {
@@ -41,24 +53,31 @@ function parseHash() {
   return { name: name || '', arg: rest.join('/'), query: Object.fromEntries(new URLSearchParams(qs || '')) };
 }
 
+let lastPath = null;
 export async function render() {
   if (ctx.locked) return renderLock();
   const r = parseHash();
-  $('#menu').innerHTML = MENU.map(([k, l]) => `<a href="#/${k}" class="${(r.name === k || (r.name === 'plan' && k === 'planes') || (r.name === 'producto' && k === 'catalogo')) ? 'active' : ''}">${esc(l)}</a>`).join('');
+  const tab = TABS.find((t) => t[3].includes(r.name)) || TABS[0];
+  $('#tabbar').innerHTML = TABS.map(([k, l, ico]) => `<a href="#/${k}" class="${tab[0] === k ? 'active' : ''}"${tab[0] === k ? ' aria-current="page"' : ''}>${ico}<span>${esc(l)}</span></a>`).join('');
+  const sub = SUB[tab[0]], cur = SUB_OF[r.name] || r.name;
+  $('#subnav').innerHTML = sub ? sub.map(([k, l]) => `<a href="#/${k}" class="${cur === k ? 'active' : ''}">${esc(l)}</a>`).join('') : '';
+  $('#subnav').hidden = !sub;
+  if (lastPath !== r.name + '/' + r.arg) { lastPath = r.name + '/' + r.arg; scrollTo(0, 0); }
   const view = $('#view');
-  const fn = ROUTES[r.name] || V1.panel;
-  const needsProfile = !['', 'perfiles', 'catalogo', 'producto', 'ajustes', 'incidencias', 'biblioteca'].includes(r.name);
+  const fn = ROUTES[r.name] || H.hoy;
+  const needsProfile = !['', 'perfiles', 'catalogo', 'producto', 'ajustes', 'incidencias', 'biblioteca', 'ficha', 'texto', 'mas', 'acerca', 'avisos'].includes(r.name);
   if (needsProfile && !ctx.profileId) {
     view.innerHTML = '<div class="card"><h1>Primero crea un perfil</h1><p>Cada registro pertenece a una persona.</p><a class="btn" href="#/perfiles">Crear perfil</a></div>';
     return;
   }
+  view.onclick = null;
   try { await fn(view, r, ctx); }
   catch (e) { console.error(e); view.innerHTML = `<div class="card"><p class="err">Error: ${esc(e.message)}</p></div>`; }
   view.focus({ preventScroll: true });
 }
 
 async function renderLock() {
-  $('#menu').innerHTML = '';
+  $('#tabbar').innerHTML = ''; $('#subnav').innerHTML = ''; $('#subnav').hidden = true;
   $('#view').innerHTML = `<div class="lock"><form class="card" id="lockForm"><h1>App bloqueada</h1>
     <label for="pin">PIN</label><input id="pin" name="pin" type="password" inputmode="numeric" autocomplete="off" required>
     <p class="err" id="pinErr" role="alert"></p><button>Desbloquear</button></form></div>`;

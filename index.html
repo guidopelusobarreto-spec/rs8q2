@@ -1,26 +1,29 @@
 <!doctype html>
-<html lang="es" data-size="19">
+<html lang="es" data-size="22">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="robots" content="noindex, nofollow">
-<meta name="theme-color" content="#1f5f5b">
+<meta name="theme-color" content="#f5f4f0" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#121413" media="(prefers-color-scheme: dark)">
 <title>Registro de sustancias</title>
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="apple-touch-icon" href="icons/icon-192.png">
+<link rel="preload" href="fonts/atkinson-400.woff2" as="font" type="font/woff2" crossorigin>
 <link rel="stylesheet" href="styles.css">
 </head>
 <body>
 <header class="top">
-  <span class="title">Registro de sustancias</span>
-  <label for="profileSel" class="small" style="margin:0;color:inherit">Perfil</label>
-  <select id="profileSel" aria-label="Perfil activo"></select>
-  <button id="installBtn" class="sec" style="color:inherit;border-color:currentColor" hidden>Instalar app</button>
-  <button id="lockBtn" class="sec" style="color:inherit;border-color:currentColor" title="Bloquear">Bloquear</button>
+  <label for="profileSel" class="sr-only">Persona activa</label>
+  <select id="profileSel" class="who" aria-label="Persona activa"></select>
+  <span class="grow"></span>
+  <button id="installBtn" class="sec slim" hidden>Instalar</button>
+  <button id="lockBtn" class="icon-btn" title="Bloquear" aria-label="Bloquear"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="5" y="11" width="14" height="10" rx="2"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/></svg></button>
 </header>
-<nav class="menu" id="menu"></nav>
+<nav class="subnav" id="subnav" aria-label="Apartados"></nav>
 <main id="view" tabindex="-1"><p>Cargando…</p></main>
+<nav class="tabbar" id="tabbar" aria-label="Secciones"></nav>
 <dialog id="dlg"></dialog>
 <noscript>Esta app necesita JavaScript.</noscript>
 <script type="module" src="js/app.js"></script>

@@ -2,7 +2,8 @@
 import { confirmCompat } from './views3.js';
 import { esc, $, $$, opt, field, inp, toast, dialog, fmtDate, fmtNum, readForm, showErr } from './ui.js';
 import { ADMIN_STATUS, EXCEED_TEXT, PLAN_MODES, planEnd, todayISO } from './model.js';
-import { CATEGORY_LABEL, STATUS_LABEL, RUO_LABEL, NOT_IMPORTED, CATALOG_SOURCE, presentation, totalActive } from './catalog.js';
+import { CATEGORY_LABEL, STATUS_LABEL, RUO_LABEL, presentation, totalActive } from './catalog.js';
+import { fichaHTML, splitFichas, cleanInline } from './text.js';
 import { safetyFor, EMERGENCY, SEVERE_SYMPTOMS, SEVERE_SOURCE, CONSULTED } from './safety.js';
 import { refreshProfiles } from './app.js';
 
@@ -10,7 +11,7 @@ const UNITS = ['mg', 'mcg', 'UI', 'ml', 'unidad', 'tableta', 'cápsula', 'aplica
 const nowTime = () => new Date().toTimeString().slice(0, 5);
 export const esDates = (t) => String(t).replace(/(\d{4})-(\d{2})-(\d{2})/g, '$3/$2/$1');
 export const alertBox = (a) => `<div class="alert ${esc(a.level)}">${esc(esDates(a.text))}</div>`;
-export const ruoBadge = (p) => (p?.research ? `<span class="badge ruo">${esc(RUO_LABEL)}</span>` : '');
+export const ruoBadge = (p) => (p?.research ? `<span class="badge ruo" title="${esc(RUO_LABEL)}">RUO · investigación</span>` : '');
 const rxBadge = (p) => (p?.rx ? '<span class="badge rx">Medicamento con receta en la UE</span>' : '');
 export const dehydration = (txt) => /diarr|v[oó]mit/i.test(txt || '');
 export const DEHYDRATION_TEXT = 'Se han registrado diarrea o vómitos: vigila signos de deshidratación (sed intensa, orina escasa u oscura, mareo, boca seca) y busca orientación sanitaria si los síntomas persisten o son importantes.';
@@ -36,10 +37,9 @@ export async function panel(view, r, ctx) {
   const all = rows.flatMap((x) => x.alerts.map((a) => ({ ...a, who: x.profile.name })));
   const order = { seguridad: 0, aviso: 1, info: 2 };
   all.sort((a, b) => order[a.level] - order[b.level]);
-  view.innerHTML = `<h1>Panel</h1>
+  view.innerHTML = `<h1>Avisos de todas las personas</h1>
     <div class="card"><h2 style="margin-top:0">Alertas e incidencias</h2>
-      ${all.length ? all.map((a) => `<div class="alert ${a.level}"><strong>${esc(a.who)}:</strong> ${esc(esDates(a.text))}</div>`).join('') : '<p class="muted">Sin alertas.</p>'}
-      <p class="small muted">El panel no valora la seguridad de ninguna sustancia: solo muestra fechas, datos que faltan y avisos.</p></div>
+      ${all.length ? all.map((a) => `<div class="alert ${a.level}"><strong>${esc(a.who)}:</strong> ${esc(esDates(a.text))}</div>`).join('') : '<p class="muted">Sin alertas.</p>'}</div>
     <div class="grid">${rows.map((x) => `<section class="card">
       <h2 style="margin-top:0">${esc(x.profile.name)}</h2>
       <p>Último peso: <strong>${x.lastWeight ? `${fmtNum(x.lastWeight.kg, 1)} kg (${fmtDate(x.lastWeight.date)})` : '—'}</strong></p>
@@ -67,7 +67,6 @@ export async function registro(view, r, ctx) {
         ${field('Hora', inp('time', nowTime(), 'type="time" required'), true)}
       </div>
       <fieldset><legend>Cantidad registrada (la que tú anotas)</legend>
-        <p class="small muted">La app no propone ni calcula cantidades. Escribe lo que conste en tu plan o lo que realmente ocurrió.</p>
         <div class="grid">${field('Cantidad', inp('amount', '', 'type="number" step="any" min="0" inputmode="decimal"'))}
         ${field('Unidad', `${inp('unit', '', 'list="units"')}<datalist id="units">${UNITS.map((u) => `<option value="${u}">`).join('')}</datalist>`)}</div>
       </fieldset>
@@ -190,8 +189,6 @@ export async function catalogo(view, r, ctx) {
   const cat = r.query.cat || '';
   const list = products.filter((p) => !cat || p.category === cat);
   view.innerHTML = `<h1>Catálogo</h1>
-    <div class="card small"><p>Importado de <em>${esc(CATALOG_SOURCE)}</em>: ${products.filter((p) => p.status !== 'custom').length} presentaciones de ${new Set(products.filter((p) => p.status !== 'custom').map((p) => p.active.split(' (')[0])).size} principios activos (${products.filter((p) => p.status === 'plan').length} del plan actual).</p>
-    <details><summary>Entradas del libro no importadas</summary><ul>${NOT_IMPORTED.map((x) => `<li>${esc(x)}</li>`).join('')}</ul></details></div>
     <div class="row noprint">${['', ...Object.keys(CATEGORY_LABEL)].map((c) => `<a class="btn ${cat === c ? '' : 'sec'}" href="#/catalogo${c ? '?cat=' + c : ''}">${esc(c ? CATEGORY_LABEL[c] : 'Todos')}</a>`).join('')}
     <button id="addP">Añadir producto</button></div>
     <div class="card" style="margin-top:1rem"><ul class="plain">${list.map((p) => `<li><a href="#/producto/${p.id}"><strong>${esc(p.substance)}</strong></a> — ${esc(presentation(p))}
@@ -225,8 +222,8 @@ export async function producto(view, r, ctx) {
   const mine = info.substances.filter((x) => keys.includes(x.key) && x.texto);
   const rel = info.compat.filter((c) => keys.some((k) => c.a?.includes(k) || c.b?.includes(k)));
   view.innerHTML = `<p><a href="#/catalogo">← Catálogo</a></p><h1>${esc(p.substance)}</h1>
-    ${mine.length ? `<div class="card"><h2 style="margin-top:0">Descripción (tu protocolo)</h2>${mine.map((x) => `<div class="orig">${esc(x.texto)}</div>`).join('')}
-      ${rel.length ? `<h3>Combinaciones según tu matriz</h3><ul class="plain">${rel.map((c) => `<li class="cmp-${esc(c.tipo)}"><strong>${esc(c.combinacion)}</strong> — ${esc(c.nivel)}<br><span class="small">${esc(c.motivo)}</span></li>`).join('')}</ul>` : ''}
+    ${mine.length ? `<div class="card"><h2 style="margin-top:0">Descripción (tu protocolo)</h2>${mine.map((x) => splitFichas(x.texto).map(fichaHTML).join('')).join('')}
+      ${rel.length ? `<h3>Combinaciones según tu matriz</h3><ul class="plain">${rel.map((c) => `<li class="cmp-${esc(c.tipo)}"><strong>${cleanInline(c.combinacion)}</strong> — ${esc(c.nivel)}<br><span class="small">${cleanInline(c.motivo)}</span></li>`).join('')}</ul>` : ''}
       <p class="small muted">Texto escrito por ti en la Biblioteca; no es información verificada por la app.</p></div>` : ''}
     ${p.research ? `<div class="ruo-banner">${esc(RUO_LABEL)}</div>` : ''}
     ${s.warning ? `<div class="alert seguridad">${esc(s.warning)}</div>` : ''}

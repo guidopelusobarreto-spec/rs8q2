@@ -1,6 +1,9 @@
 // Biblioteca de protocolos: modelos escritos por el usuario. Aplicar uno crea planes editables para una persona.
 import { esc, $, $$, opt, field, inp, toast, dialog, download } from './ui.js';
-import { phaseText, todayISO, phasesWindow } from './model.js';
+import { todayISO, phasesWindow } from './model.js';
+import { amountText } from './schedule.js';
+import { cleanInline } from './text.js';
+import { hueFor } from './hoy.js';
 import { productOptions, ruoBadge } from './views1.js';
 import { saveUI, refreshProfiles } from './app.js';
 
@@ -14,29 +17,27 @@ export async function biblioteca(view, r, ctx) {
   const shown = list.filter((t) => !sex || t.sex === sex || t.sex === 'ambos');
   const groups = [...new Set(shown.map((t) => t.compound || 'Otros'))];
   const pn = (id) => products.find((p) => p.id === id);
-  const card = (t) => `<div class="card tpl" data-id="${esc(t.id)}">
-    <h3 style="margin-top:0">${esc(t.name)}</h3>
-    <p class="small"><span class="badge">${esc(SEX[t.sex])}</span>${t.route ? ` · ${esc(t.route)}` : ''}</p>
+  const subOf = (name) => info.substances.find((x) => x.nombre === name && x.texto);
+  const card = (t) => `<div class="tpl" data-id="${esc(t.id)}">
+    <h3 style="margin:.1rem 0 .2rem">${esc(t.name)}</h3>
+    <p class="small"><span class="badge">${esc(SEX[t.sex])}</span>${t.route ? ` · ${esc(t.route)}` : ''}${t.durationText ? ` · ${esc(t.durationText)}` : ''}</p>
     ${t.blocked ? `<div class="alert seguridad">${esc(t.blocked)}</div>` : ''}
-    ${t.items.map((it) => `<p style="margin:.4rem 0 .1rem"><strong>${esc(it.substance)}</strong> ${pn(it.productId) ? ruoBadge(pn(it.productId)) : it.productId ? '' : '<span class="small muted">(sin producto del catálogo)</span>'}</p>
-      ${it.phases.length ? `<ul class="plain small">${it.phases.map((f) => `<li>${esc(phaseText(f))}</li>`).join('')}</ul>` : ''}${it.notes ? `<p class="small">${esc(it.notes)}</p>` : ''}`).join('')}
-    <dl class="kv small">${t.durationText ? `<dt>Duración</dt><dd>${esc(t.durationText)}</dd>` : ''}${t.restText ? `<dt>Descanso / después</dt><dd>${esc(t.restText)}</dd>` : ''}${t.notes ? `<dt>Notas</dt><dd>${esc(t.notes)}</dd>` : ''}${t.source ? `<dt>Fuente</dt><dd>${esc(t.source)}</dd>` : ''}</dl>
-    <div class="row">${t.blocked ? '' : `<button class="apply"${profiles.length ? '' : ' disabled'}>Aplicar a una persona</button>`}<button class="sec del">Eliminar</button></div></div>`;
-  view.innerHTML = `<h1>Biblioteca de protocolos</h1>
-    <p class="small muted">Modelos escritos por ti. La app no propone cantidades: aplicar un modelo crea los planes de una persona con tus fases, y después puedes ajustar esos planes sin cambiar el modelo.</p>
-    <div class="card"><div class="row">
-      <label class="btn" style="margin:0">Cargar biblioteca (.json)<input type="file" id="libFile" accept=".json,application/json" hidden></label>
-      <button id="libExp" class="sec"${list.length ? '' : ' disabled'}>Exportar biblioteca</button></div>
+    ${t.items.map((it) => `${t.items.length > 1 ? `<p style="margin:.5rem 0 .1rem"><span class="sw" style="--h:${hueFor(it.substance)}"></span> <strong>${esc(it.substance)}</strong> ${pn(it.productId) ? ruoBadge(pn(it.productId)) : ''}</p>` : ''}
+      ${it.phases.length ? `<div class="table-wrap"><table class="phases"><tbody>${it.phases.map((f) => `<tr><th scope="row">Semanas ${f.fromWeek}${f.toWeek == null ? '–fin' : f.toWeek !== f.fromWeek ? '–' + f.toWeek : ''}</th><td><strong>${esc(amountText(f) || '—')}</strong> · ${esc(f.frequency || '—')}${f.note ? ` · ${esc(f.note)}` : ''}</td></tr>`).join('')}</tbody></table></div>` : ''}`).join('')}
+    <div class="row" style="margin-top:.5rem">${t.blocked ? '' : `<button class="apply"${profiles.length ? '' : ' disabled'}>Aplicar a una persona</button>`}<button class="ghost del">Eliminar</button></div></div>`;
+  const fileCard = `<label class="btn" style="margin:0">Cargar biblioteca (.json)<input type="file" id="libFile" accept=".json,application/json" hidden></label>
+      <button id="libExp" class="sec"${list.length ? '' : ' disabled'}>Exportar biblioteca</button>
       <label class="check"><input type="checkbox" id="libReplace">Al cargar, sustituir la biblioteca actual</label>
-      <p class="small muted">La biblioteca también se incluye en la copia de seguridad completa de Ajustes.</p></div>
-    ${list.length ? `<p>${esc(info.title || '')} · ${list.length} modelos</p>
-      ${field('Mostrar', `<select id="sexSel">${[['', 'Todos'], ['hombre', 'Hombres'], ['mujer', 'Mujeres']].map(([k, v]) => opt(k, v, sex)).join('')}</select>`)}
-      ${groups.map((g) => `<details class="card" ${groups.length === 1 ? 'open' : ''}><summary><strong>${esc(g)}</strong> (${shown.filter((t) => (t.compound || 'Otros') === g).length})</summary>
-        ${info.texts?.[g] ? `<details class="desc"><summary>Descripción completa (tu texto)</summary><div class="orig">${esc(info.texts[g])}</div></details>` : ''}
-        ${shown.filter((t) => (t.compound || 'Otros') === g).map(card).join('')}</details>`).join('')}
-      ${info.compat?.length ? `<details class="card"><summary><strong>Compatibilidades (según tu protocolo)</strong></summary><ul class="plain">${info.compat.map((c) => `<li class="cmp-${esc(c.tipo || '')}"><strong>${esc(c.combinacion)}</strong> — ${esc(c.nivel)}<br><span class="small">${esc(c.motivo)}</span></li>`).join('')}</ul></details>` : ''}
-      ${info.original ? `<details class="card"><summary><strong>Texto original completo</strong></summary><div class="orig">${esc(info.original)}</div></details>` : ''}`
-    : '<div class="card"><p>La biblioteca está vacía. Carga el archivo .json con tus protocolos.</p></div>'}`;
+      <p class="small muted">También se incluye en la copia de seguridad completa de Ajustes.</p>`;
+  view.innerHTML = `<h1>Biblioteca</h1>
+    ${list.length ? `<p class="small">${esc(info.title || '')} · ${list.length} modelos${info.original ? ' · <a href="#/texto">Texto original completo</a>' : ''}</p>
+      <div class="row noprint" style="margin-bottom:.8rem">${[['', 'Todos'], ['hombre', 'Hombres'], ['mujer', 'Mujeres']].map(([k, v]) => `<a class="btn slim ${sex === k ? '' : 'sec'}" href="#/biblioteca${k ? '?s=' + k : ''}">${v}</a>`).join('')}</div>
+      ${groups.map((g) => { const sub = subOf(g); return `<section class="card" data-group="${esc(g)}"><h2 style="margin-top:0"><span class="sw" style="--h:${hueFor(g)}"></span> ${esc(g)}</h2>
+        ${sub ? `<p><a href="#/ficha/${esc(sub.key)}">Ficha completa (tu texto)</a></p>` : g === 'Combinados' && info.original ? '<p><a href="#/texto">Tus cronogramas en el texto original</a></p>' : ''}
+        ${shown.filter((t) => (t.compound || 'Otros') === g).map(card).join('')}</section>`; }).join('')}
+      ${info.compat?.length ? `<section class="card"><h2 style="margin-top:0">Compatibilidades (tu Parte 3)</h2><ul class="plain">${info.compat.map((c) => `<li class="cmp-${esc(c.tipo || '')}"><strong>${cleanInline(c.combinacion)}</strong> — ${esc(c.nivel)}<br><span class="small">${cleanInline(c.motivo)}</span></li>`).join('')}</ul></section>` : ''}
+      <details class="card noprint"><summary>Archivo de la biblioteca</summary>${fileCard}</details>`
+    : `<div class="card"><p>La biblioteca está vacía. Carga el archivo .json con tus protocolos.</p>${fileCard}</div>`}`;
 
   $('#libFile').addEventListener('change', async (e) => {
     const file = e.target.files[0]; if (!file) return;
@@ -44,7 +45,6 @@ export async function biblioteca(view, r, ctx) {
     catch (err) { toast('No se pudo cargar: ' + err.message); }
   });
   $('#libExp').addEventListener('click', async () => download(`biblioteca-protocolos-${todayISO()}.json`, JSON.stringify(await m.exportLibrary(), null, 1), 'application/json'));
-  $('#sexSel')?.addEventListener('change', (e) => { location.hash = '#/biblioteca' + (e.target.value ? '?s=' + e.target.value : ''); });
   $$('.tpl').forEach((el) => {
     const t = list.find((x) => x.id === el.dataset.id);
     el.querySelector('.del').addEventListener('click', async () => {

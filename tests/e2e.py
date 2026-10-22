@@ -202,11 +202,11 @@ with sync_playwright() as p:
     # biblioteca de protocolos
     go(page, '#/biblioteca'); page.wait_for_selector('h1')
     page.set_input_files('#libFile', os.environ['LIB_FILE']); page.wait_for_timeout(600)
-    ok('biblioteca: carga el archivo (34 modelos)', '34 modelos' in page.inner_text('main'))
-    page.select_option('#sexSel', 'mujer'); page.wait_for_timeout(400)
+    NLIB = len(json.load(open(os.environ['LIB_FILE']))['templates'])
+    ok(f'biblioteca: carga el archivo ({NLIB} modelos)', f'{NLIB} modelos' in page.inner_text('main'))
+    go(page, '#/biblioteca?s=mujer'); page.wait_for_timeout(400)
     ok('biblioteca: filtro mujeres oculta modelos de hombres', page.locator('.tpl[data-id="reta-h"]').count() == 0 and page.locator('.tpl[data-id="reta-m"]').count() == 1)
     ok('biblioteca: modelo contraindicado sin botón Aplicar', page.locator('.tpl[data-id="rad-m"] .apply').count() == 0)
-    page.locator('summary:has-text("Combinados (")').click()
     page.locator('.tpl[data-id="comb-m"] .apply').click(); page.wait_for_timeout(300)
     page.select_option('dialog[open] [name=profileId]', label='Ana')
     ok('biblioteca: duración fija precargada (16)', page.input_value('dialog[open] [name=duration]') == '16')
@@ -216,7 +216,6 @@ with sync_playwright() as p:
 
     # compatibilidad: Ana ya tiene Ostarine (combinado femenino, semanas 6-13); otro SARM está prohibido
     go(page, '#/biblioteca'); page.wait_for_timeout(400)
-    page.locator('summary:has-text("RAD-140 (testolona) (")').click()
     page.locator('.tpl[data-id="rad-h"] .apply').click(); page.wait_for_timeout(300)
     page.select_option('dialog[open] [name=profileId]', label='Ana')
     page.click('dialog[open] button:has-text("Crear planes")'); page.wait_for_timeout(600)
@@ -233,7 +232,44 @@ with sync_playwright() as p:
     go(page, '#/producto/osta25'); page.wait_for_timeout(400)
     ok('ficha: descripción con tu texto y combinaciones', 'Descripción (tu protocolo)' in page.inner_text('main') and 'SARM único' in page.inner_text('main'))
     go(page, '#/biblioteca'); page.wait_for_timeout(300)
-    ok('biblioteca: texto original completo disponible', page.locator('summary:has-text("Texto original completo")').count() == 1)
+    ok('biblioteca: texto original completo disponible', page.locator('main a:has-text("Texto original completo")').count() == 1)
+
+    # pantalla Hoy (Ana tiene el combinado femenino desde hoy)
+    go(page, '#/'); page.wait_for_timeout(500)
+    ok('hoy: semana del protocolo', 'Semana 1 de 16' in page.inner_text('main'))
+    bpc = page.locator('.dose', has_text='BPC-157')
+    ok('hoy: BPC-157 dos tomas (mañana y noche)', bpc.count() == 2)
+    bpc.first.locator('button:has-text("Hecho")').click(); page.wait_for_timeout(600)
+    ok('hoy: «Hecho» registra con un toque', page.locator('.dose.done', has_text='BPC-157').count() == 1)
+    page.locator('.dose.done', has_text='BPC-157').locator('button:has-text("Deshacer")').click(); page.wait_for_timeout(600)
+    ok('hoy: deshacer devuelve la toma a pendiente', page.locator('.dose.done', has_text='BPC-157').count() == 0)
+    page.locator('.dose', has_text='1 vez por semana (SC)').locator('button:has-text("Hecho hoy")').click(); page.wait_for_timeout(600)
+    ok('hoy: cupo semanal marcado', 'Hecho hoy a las' in page.locator('.dose', has_text='1 vez por semana (SC)').inner_text())
+    page.locator('.dose', has_text='Creatina').locator('button:has-text("Más tarde")').click(); page.wait_for_timeout(300)
+    dlg(page).locator('button:has-text("1 hora")').click(); page.wait_for_timeout(600)
+    ok('hoy: más tarde pospone', 'Pospuesta hasta' in page.locator('.dose', has_text='Creatina').inner_text())
+    page.locator('.dose', has_text='Electrolitos').locator('button:has-text("Omitir")').click(); page.wait_for_timeout(600)
+    ok('hoy: omitir', 'Omitido' in page.locator('.dose', has_text='Electrolitos').inner_text())
+    go(page, '#/historial'); page.wait_for_timeout(300)
+    ok('historial: la toma deshecha queda como cancelada', 'Cancelado' in page.inner_text('main'))
+    go(page, f'#/calendario?v=dia&d={iso(today)}'); page.wait_for_timeout(400)
+    ok('calendario: tomas previstas y registradas', 'Toma prevista' in page.inner_text('main') and 'Registro' in page.inner_text('main'))
+    go(page, '#/protocolos'); page.wait_for_timeout(400)
+    cf = page.locator('.card', has_text='Cronograma Combinado Femenino')
+    ok('cronograma: tabla con las 6 sustancias', cf.locator('table.crono tbody tr').count() == 6 and 'semana 1 de 16' in cf.inner_text())
+    page.locator('table.crono a', has_text='BPC-157').click(); page.wait_for_timeout(500)
+    ok('plan: lectura de la frecuencia', 'Todos los días · 2 veces' in page.inner_text('main'))
+    page.click('[data-freq="0"]'); page.wait_for_timeout(300)
+    d = dlg(page); d.locator('[name=kind]').select_option('days'); d.locator('label:has-text("lun") input').check()
+    d.locator('button:has-text("Guardar")').click(); page.wait_for_timeout(500)
+    ok('plan: frecuencia corregida por el usuario', 'corregido por ti' in page.inner_text('main'))
+    go(page, '#/ficha/retatrutida'); page.wait_for_timeout(400)
+    ok('ficha: texto literal maquetado', page.locator('main .ficha').count() >= 1 and page.locator('table.phases tr').count() >= 1)
+    go(page, '#/texto'); page.wait_for_timeout(400)
+    t = page.inner_text('main')
+    ok('texto original: tabla, flechas e índice', page.locator('.doc table').count() == 1 and '→' in t and '\\rightarrow' not in t and 'NAD⁺' in t)
+    go(page, '#/catalogo'); page.wait_for_timeout(300)
+    ok('catálogo: sin la línea de origen', 'Importado de' not in page.inner_text('main'))
 
     # importador de texto
     go(page, '#/planes'); page.wait_for_timeout(200); page.click('#imp')
@@ -248,7 +284,8 @@ with sync_playwright() as p:
 
     # anchos 320 y 360: sin desbordamiento horizontal
     routes = ['#/', '#/registro', '#/historial', f'#/calendario?v=mes&d={iso(today)}', '#/planes', '#/pct', '#/recordatorios', '#/peso',
-              '#/habitos', f'#/informes?from={iso(today - dt.timedelta(days=28))}&to={iso(today)}', '#/incidencias', '#/catalogo', '#/producto/reta15', '#/perfiles', '#/ajustes', '#/biblioteca', '#/biblioteca?s=hombre']
+              '#/habitos', f'#/informes?from={iso(today - dt.timedelta(days=28))}&to={iso(today)}', '#/incidencias', '#/catalogo', '#/producto/reta15', '#/perfiles', '#/ajustes', '#/biblioteca', '#/biblioteca?s=hombre',
+              '#/protocolos', '#/ficha/retatrutida', '#/texto', '#/mas', '#/acerca', '#/avisos', f'#/?d={iso(today + dt.timedelta(days=1))}']
     for w in (320, 360):
         page.set_viewport_size({'width': w, 'height': 760})
         bad = []

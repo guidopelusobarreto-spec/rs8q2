@@ -6,11 +6,12 @@ import { WHO_ACTIVITY, EMERGENCY } from './safety.js';
 import { productOptions, alertBox, dehydration, DEHYDRATION_TEXT, ruoBadge } from './views1.js';
 import { setPin, checkPin, askPermission, notifySupported, remindersToICS, checkDue } from './notify.js';
 import { confirmCompat } from './views3.js';
+import { scheduleFor, scheduleText, adherence, KINDS, DAY_NAMES, MOMENTS } from './schedule.js';
 import { saveUI, refreshProfiles, ctx as appCtx, installApp, appInstalledHere, updateLockBtn } from './app.js';
 
 const DOW = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
 const DOW_FULL = [['1', 'Lun'], ['2', 'Mar'], ['3', 'Mié'], ['4', 'Jue'], ['5', 'Vie'], ['6', 'Sáb'], ['0', 'Dom']];
-const TYPES = { recordatorio: 'Recordatorio', registro: 'Registro', ciclo: 'Ciclo', descanso: 'Descanso', revision: 'Revisión', pct: 'Postciclo', peso: 'Pesaje', evento: 'Cita/evento', incidencia: 'Incidencia', sintoma: 'Síntoma' };
+const TYPES = { prevista: 'Toma prevista', sinregistro: 'Prevista sin registro', registro: 'Registro', recordatorio: 'Recordatorio', ciclo: 'Ciclo', descanso: 'Descanso', revision: 'Revisión', pct: 'Postciclo', peso: 'Pesaje', evento: 'Cita/evento', incidencia: 'Incidencia', sintoma: 'Síntoma' };
 const dowMon = (s) => (new Date(s + 'T12:00:00').getDay() + 6) % 7;
 
 // ── Calendario ──
@@ -38,10 +39,10 @@ export async function calendario(view, r, ctx) {
     body = Array.from({ length: 7 }, (_, i) => addDays(from, i)).map((x) => `<h3>${new Date(x + 'T12:00:00').toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'short' })}</h3>${list(byDay(x))}`).join('');
   } else body = list(byDay(d));
   view.innerHTML = `<h1>Calendario</h1>
-    <div class="row noprint">${['mes', 'semana', 'dia'].map((x) => `<a class="btn ${v === x ? '' : 'sec'}" href="#/calendario?v=${x}&d=${d}">${{ mes: 'Mes', semana: 'Semana', dia: 'Día' }[x]}</a>`).join('')}
-      <button id="ev" class="sec">Añadir cita/evento</button></div>
-    <div class="card" style="margin-top:1rem"><div class="row" style="justify-content:space-between"><a class="btn sec" href="#/calendario?v=${v}&d=${prev}">‹ Anterior</a><strong>${esc(title)}</strong><a class="btn sec" href="#/calendario?v=${v}&d=${next}">Siguiente ›</a></div>
-      <div class="legend">${Object.entries(TYPES).map(([k, l]) => `<span><span class="dot t-${k}"></span> ${l}</span>`).join('')}</div>${body}</div>`;
+    <div class="row noprint">${['mes', 'semana', 'dia'].map((x) => `<a class="btn slim ${v === x ? '' : 'sec'}" href="#/calendario?v=${x}&d=${d}">${{ mes: 'Mes', semana: 'Semana', dia: 'Día' }[x]}</a>`).join('')}
+      <button id="ev" class="ghost slim">＋ Cita</button></div>
+    <div class="card" style="margin-top:.8rem"><div class="calnav"><a class="btn sec slim" href="#/calendario?v=${v}&d=${prev}" aria-label="Anterior">‹</a><strong>${esc(title)}</strong><a class="btn sec slim" href="#/calendario?v=${v}&d=${next}" aria-label="Siguiente">›</a></div>
+      <details class="small" style="margin:.4rem 0"><summary>Leyenda</summary><div class="legend">${Object.entries(TYPES).map(([k, l]) => `<span><span class="dot t-${k}"></span> ${l}</span>`).join('')}</div></details>${body}</div>`;
   $$('[data-day]').forEach((el) => { const go = () => (location.hash = `#/calendario?v=dia&d=${el.dataset.day}`); el.addEventListener('click', go); el.addEventListener('keydown', (e) => e.key === 'Enter' && go()); });
   $('#ev').addEventListener('click', async () => {
     const ok = await dialog(`<form><h2>Cita o evento personal</h2>${field('Título', inp('title', '', 'required'), true)}
@@ -62,10 +63,10 @@ const planForm = (products, p = {}) => `
   ${field('Duración', inp('duration', p.duration ?? '', 'type="number" min="1" step="1"'))}
   ${field('Unidad de duración', `<select name="durationUnit">${[['dias', 'días'], ['semanas', 'semanas'], ['meses', 'meses']].map(([k, v]) => opt(k, v, p.durationUnit)).join('')}</select>`)}</div>
   <p class="small muted">Si solo indicas duración, la fecha final se calcula desde el inicio (contando el día de inicio). Si no indicas ninguna, no se inventa.</p>
-  <fieldset><legend>Cantidad documentada en el plan (opcional)</legend><p class="small muted">Solo se usa para avisar si un registro la supera con la misma unidad. La app no propone valores.</p>
+  <fieldset><legend>Cantidad documentada en el plan (opcional)</legend><p class="small muted">Solo se usa para avisar si un registro la supera con la misma unidad.</p>
   <div class="grid">${field('Cantidad del plan', inp('plannedAmount', p.plannedAmount ?? '', 'type="number" step="any" min="0"'))}${field('Unidad', inp('plannedUnit', p.plannedUnit || '', 'list="units2"') + '<datalist id="units2"><option value="mg"><option value="mcg"><option value="UI"><option value="ml"><option value="unidad"><option value="tableta"></datalist>')}</div></fieldset>
   <fieldset><legend>Fases del protocolo (las escribes tú)</legend>
-    <p class="small muted">Una fase por línea: <code>semanas 1-4 | cantidad | unidad | frecuencia | nota</code>. Rango: <code>2-2.5</code>; hasta el final: <code>semanas 9-fin</code>. Ejemplo de formato: <code>semanas 1-4 | 1 | tableta | diaria | indicación de mi médico</code>. La app no propone valores; solo compara los registros con lo que escribas.</p>
+    <p class="small muted">Una fase por línea: <code>semanas 1-4 | cantidad | unidad | frecuencia | nota</code>. Rango: <code>2-2.5</code>; hasta el final: <code>semanas 9-fin</code>. Ejemplo de formato: <code>semanas 1-4 | 1 | tableta | diaria | indicación de mi médico</code>. La frecuencia se lee para la pantalla Hoy; si se entiende mal, corrígela en el plan.</p>
     <textarea name="phasesText" rows="4">${esc((p.phases || []).map((f) => `semanas ${f.fromWeek}-${f.toWeek ?? 'fin'} | ${f.amount ?? ''}${f.amountMax != null ? '-' + f.amountMax : ''} | ${f.unit} | ${f.frequency} | ${f.note}`).join('\n'))}</textarea></fieldset>
   ${field('Pauta anotada (texto libre)', `<textarea name="scheduleNote">${esc(p.scheduleNote || '')}</textarea>`)}
   ${field('Revisión periódica cada (días; seguimiento continuo)', inp('reviewEveryDays', p.reviewEveryDays ?? '', 'type="number" min="1"'))}
@@ -83,7 +84,6 @@ export async function planes(view, r, ctx) {
   const list = (await m.list('plans', ctx.profileId)).sort((a, b) => b.start.localeCompare(a.start));
   const pn = (id) => products.find((p) => p.id === id);
   view.innerHTML = `<h1>Ciclos y periodos de seguimiento</h1>
-    <p class="small muted">La app no supone duraciones (ni 4 semanas ni otra), no prolonga, reinicia ni repite ciclos y no genera pautas. Solo organiza lo que anotas.</p>
     <div class="row"><button id="new">Nuevo plan o periodo</button><button id="imp" class="sec">Importar desde texto</button></div>
     <div class="card" style="margin-top:1rem"><ul class="plain">${list.map((p) => { const end = planEnd(p); return `<li><a href="#/plan/${p.id}"><strong>${esc(p.name || PLAN_MODES[p.mode])}</strong></a> ${p.closed ? '<span class="badge">Cerrado</span>' : ''}
       <br>${esc(PLAN_MODES[p.mode])} · ${esc(pn(p.productId)?.substance || 'sin sustancia')} ${ruoBadge(pn(p.productId))}
@@ -108,6 +108,7 @@ export async function planDetalle(view, r, ctx) {
   const days = Number(r.query.dias) || null;
   const rep = days ? await m.report(ctx.profileId, { planId: p.id, days }) : null;
   const t = todayISO();
+  const admins = await m.list('administrations', ctx.profileId);
   const nextReview = p.reviewEveryDays > 0 ? addDays(p.start, (Math.floor(diffDays(p.start, t) / p.reviewEveryDays) + 1) * p.reviewEveryDays) : null;
   const lastReview = p.reviewEveryDays > 0 && diffDays(p.start, t) >= p.reviewEveryDays ? addDays(p.start, Math.floor(diffDays(p.start, t) / p.reviewEveryDays) * p.reviewEveryDays) : null;
   view.innerHTML = `<p><a href="#/planes">← Ciclos y periodos</a></p><h1>${esc(p.name || PLAN_MODES[p.mode])}</h1>
@@ -123,6 +124,10 @@ export async function planDetalle(view, r, ctx) {
       <div class="row noprint" style="margin-top:.6rem"><button id="edit" class="sec">Editar</button>${lastReview ? `<button id="rev" class="sec">Marcar revisión del ${fmtDate(lastReview)} como hecha</button>` : ''}<button id="close" class="sec">${p.closed ? 'Reabrir' : 'Cerrar plan'}</button>
       <a class="btn sec" href="#/pct?ciclo=${p.id}">Seguimiento postciclo</a></div>
       ${p.history?.length ? `<details><summary>Historial de modificaciones (${p.history.length})</summary><ul class="small">${p.history.map((h) => `<li>${new Date(h.at).toLocaleString('es-ES')}: ${h.changes.map((c) => esc(c.field)).join(', ')}</li>`).join('')}</ul></details>` : ''}</div>
+    ${p.phases?.length ? `<div class="card"><h2 style="margin-top:0">Frecuencia y cumplimiento</h2>
+      ${(() => { const ad = adherence(p, admins, t); return `<p>Cumplimiento hasta hoy: <strong>${ad.pct == null ? '—' : `${ad.done} de ${ad.expected} (${ad.pct} %)`}</strong></p>`; })()}
+      <ul class="plain">${p.phases.map((f, i) => { const sc = scheduleFor(p, f); return `<li><strong>${esc(phaseText(f))}</strong><br><span class="small">Se entiende: ${esc(scheduleText(sc))}${sc.overridden ? ' (corregido por ti)' : ''}${sc.notes.length ? ` · ${esc(sc.notes.join(' · '))}` : ''}</span>
+        <div class="row noprint" style="margin-top:.3rem"><button class="sec slim" data-freq="${i}">Corregir frecuencia</button></div></li>`; }).join('')}</ul></div>` : ''}
     <div class="card"><h2 style="margin-top:0">Revisiones</h2><div class="row">${REVIEW_DAYS.map((d) => `<a class="btn ${days === d ? '' : 'sec'}" href="#/plan/${p.id}?dias=${d}">${d} días (${fmtDate(addDays(p.start, d))})</a>`).join('')}</div>
       ${rep ? reportHTML(rep, products) : '<p class="muted">Elige una revisión para ver el informe.</p>'}</div>`;
   $('#edit').addEventListener('click', async () => {
@@ -132,6 +137,30 @@ export async function planDetalle(view, r, ctx) {
     if (ok) planDetalle(view, r, ctx);
   });
   $('#rev')?.addEventListener('click', async () => { await m.markReviewDone(ctx.profileId, p.id, lastReview); planDetalle(view, r, ctx); });
+  $$('[data-freq]').forEach((btn) => btn.addEventListener('click', async () => {
+    const f = p.phases[btn.dataset.freq], sc = scheduleFor(p, f);
+    const ok = await dialog(`<form><h2>Frecuencia de la fase</h2><p class="small">Tu texto: «${esc(f.frequency || '—')}». No se cambia: solo se corrige cómo lo entiende la pantalla Hoy.</p>
+      ${field('Tipo', `<select name="kind">${Object.entries(KINDS).map(([k, v]) => opt(k, v, sc.kind)).join('')}</select>`)}
+      <fieldset><legend>Días (si son días concretos)</legend><div class="row">${[1, 2, 3, 4, 5, 6, 0].map((d) => `<label class="check"><input type="checkbox" name="days" value="${d}" data-multi ${sc.days.includes(d) ? 'checked' : ''}>${DAY_NAMES[d].slice(0, 3)}</label>`).join('')}</div></fieldset>
+      <div class="grid">${field('Veces al día', inp('perDay', sc.perDay || 1, 'type="number" min="1" max="12"'))}${field('Veces por semana', inp('perWeek', sc.perWeek ?? '', 'type="number" min="1" max="21"'))}
+      ${field('Cada N días', inp('everyN', sc.everyN ?? '', 'type="number" min="1"'))}${field('Momento', `<select name="moment"><option value="">—</option>${Object.entries(MOMENTS).map(([k, v]) => opt(k, v.label, sc.moments[0])).join('')}</select>`)}</div>
+      ${field('Horas fijas (HH:MM, separadas por comas)', inp('times', sc.times.join(', ')))}
+      <input type="hidden" name="reset" value="">
+      <div class="row"><button>Guardar</button><button type="button" class="ghost" id="fReset">Lectura automática</button><button type="button" class="ghost" data-close>Cancelar</button></div></form>`, {
+      onOpen: (dl) => dl.querySelector('#fReset').addEventListener('click', () => { dl.querySelector('[name=reset]').value = '1'; dl.querySelector('form').requestSubmit(); }),
+      onSubmit: async (d) => {
+        if (d.reset) return m.setFrequency(ctx.profileId, p.id, f.frequency, null);
+        const times = d.times.split(',').map((x) => x.trim()).filter(Boolean);
+        if (times.some((x) => !/^\d{2}:\d{2}$/.test(x))) throw new Error('Horas en formato HH:MM, p. ej. 08:30');
+        const days = (d.days || []).map(Number);
+        if (d.kind === 'days' && !days.length) throw new Error('Marca al menos un día');
+        if (d.kind === 'weekly' && !(Number(d.perWeek) > 0)) throw new Error('Indica cuántas veces por semana');
+        if (d.kind === 'everyN' && !(Number(d.everyN) > 0)) throw new Error('Indica cada cuántos días');
+        return m.setFrequency(ctx.profileId, p.id, f.frequency, { kind: d.kind, days, perDay: Number(d.perDay) || 1, perWeek: Number(d.perWeek) || null, everyN: Number(d.everyN) || null, times, moments: d.moment ? [d.moment] : [], maxPerWeek: sc.maxPerWeek });
+      },
+    });
+    if (ok) { toast('Frecuencia guardada'); planDetalle(view, r, ctx); }
+  }));
   $('#close').addEventListener('click', async () => { await m.closePlan(ctx.profileId, p.id, !p.closed); planDetalle(view, r, ctx); });
 }
 
@@ -155,7 +184,7 @@ export async function pct(view, r, ctx) {
   const m = ctx.model;
   const cycles = await m.list('plans', ctx.profileId);
   const list = await m.list('pct', ctx.profileId);
-  view.innerHTML = `<h1>Seguimiento postciclo</h1><p class="small muted">Solo registra y organiza la información existente. La app no propone productos, cantidades ni fechas de postciclo.</p>
+  view.innerHTML = `<h1>Seguimiento postciclo</h1>
     <p><button id="new">Nuevo seguimiento</button></p>
     ${list.map((x) => { const c = cycles.find((y) => y.id === x.cycleId); return `<div class="card"><h2 style="margin-top:0">${esc(c?.name || 'Seguimiento postciclo')} <span class="badge">${esc(PCT_STATUS[x.status])}</span></h2>
       <dl class="kv"><dt>Ciclo relacionado</dt><dd>${esc(c ? (c.name || PLAN_MODES[c.mode]) : '—')}</dd><dt>Fin previsto</dt><dd>${fmtDate(x.plannedEnd)}</dd><dt>Fin real</dt><dd>${fmtDate(x.actualEnd)}</dd>
@@ -195,8 +224,7 @@ export async function recordatorios(view, r, ctx) {
   view.innerHTML = `<h1>Recordatorios</h1>
     <div class="card small"><p><strong>Cómo avisa la app:</strong> mientras está abierta (o en segundo plano reciente) muestra notificaciones del sistema. Con la app cerrada, un navegador no garantiza avisos a una hora exacta: para eso, exporta los recordatorios al calendario de Android (.ics), que sí avisa.</p>
       <p>Permiso de notificaciones: <strong>${esc({ granted: 'concedido', denied: 'denegado', default: 'sin decidir', 'no-soportado': 'no disponible en este navegador' }[perm])}</strong></p>
-      <div class="row noprint"><button id="perm" class="sec">Activar notificaciones</button><button id="test" class="sec">Probar aviso</button><button id="ics" class="sec">Exportar a calendario (.ics)</button></div>
-      <p class="muted">Un recordatorio nunca incluye ni modifica una cantidad, y no marca nada como realizado.</p></div>
+      <div class="row noprint"><button id="perm" class="sec">Activar notificaciones</button><button id="test" class="sec">Probar aviso</button><button id="ics" class="sec">Exportar a calendario (.ics)</button></div></div>
     <p><button id="new">Nuevo recordatorio</button></p>
     <div class="card"><ul class="plain">${list.map((x) => `<li><strong>${esc(x.label)}</strong> ${x.enabled ? '' : '<span class="badge">Desactivado</span>'} <span class="badge">${esc(x.kind)}</span>
       <br><span class="small">${x.times.join(', ')} · ${x.days.length ? x.days.map((d) => DOW_FULL.find((z) => +z[0] === d)[1]).join(' ') : 'todos los días'} · desde ${fmtDate(x.startDate)}${x.endDate ? ' hasta ' + fmtDate(x.endDate) : ''}${x.snoozedUntil && new Date(x.snoozedUntil) > new Date() ? ' · pospuesto hasta ' + new Date(x.snoozedUntil).toLocaleTimeString('es-ES', { hour: '2-digit', minute: '2-digit' }) : ''}</span>
