@@ -3,6 +3,7 @@
 import { esc, toast, dialog, fmtDate, field, inp, opt } from './ui.js';
 import { FEEL, todayISO, addDays, planWeek } from './model.js';
 import { missingDoses } from './schedule.js';
+import { parseFicha, splitFichas, cleanInline } from './text.js';
 
 // ── Cómo sienta ──
 export const feelChip = (a) => (a?.feel ? ` <span class="chip ${a.feel === 'efectos' ? 'warn' : ''}">${esc(FEEL[a.feel])}</span>` : '');
@@ -115,4 +116,44 @@ export async function startDialog(ctx, plans, labelOf = (p) => p.name || 'plan')
   toast('Fecha de inicio cambiada');
   await backfillDialog(ctx, ok);
   return true;
+}
+
+// ── Tu protocolo como guía, por sustancia ──
+// Busca en tu biblioteca la ficha de la sustancia del plan (por nombre o por presentación) y elige la que corresponde:
+// la ficha que cita el plan («ficha N»), o la de mujeres / hombres según el modelo o la persona. Muestra tu texto tal cual.
+export function protocolFicha(info, plan, sex = '') {
+  const subs = info?.substances || [];
+  const s = subs.find((x) => plan.substance && x.nombre === plan.substance) || subs.find((x) => plan.productId && (x.productIds || []).includes(plan.productId));
+  if (!s?.texto) return null;
+  const fichas = splitFichas(s.texto), head = (f) => f.split('\n')[0];
+  const n = (plan.source || '').match(/ficha (\d+)/)?.[1];
+  const pick = (n && fichas.find((f) => f.startsWith(n + '. '))) || (sex === 'mujer' && fichas.find((f) => /mujer/i.test(head(f))))
+    || (sex === 'hombre' && fichas.find((f) => /hombre/i.test(head(f)))) || fichas[0];
+  return { key: s.key, text: pick };
+}
+// Contexto para varias tarjetas: biblioteca, modelos y sexo de la persona, leídos una vez.
+export async function guideContext(ctx, plans) {
+  const info = await ctx.model.libraryInfo();
+  if (!info.substances?.length) return () => null;
+  const prof = (await ctx.model.profiles()).find((p) => p.id === ctx.profileId);
+  const tpl = new Map();
+  for (const id of new Set(plans.map((p) => p.templateId).filter(Boolean))) tpl.set(id, await ctx.store.get('templates', id));
+  const cache = new Map();
+  return (plan) => {
+    if (!cache.has(plan.id)) {
+      const ts = tpl.get(plan.templateId)?.sex;
+      cache.set(plan.id, protocolFicha(info, plan, ts && ts !== 'ambos' ? ts : prof?.sex || ''));
+    }
+    return cache.get(plan.id);
+  };
+}
+export function guideHTML(g, { open = false } = {}) {
+  if (!g) return '';
+  const f = parseFicha(g.text), get = (re) => f.fields.filter((x) => re.test(x.key));
+  const items = (x) => (x.items.length ? `<ul class="doc-list">${x.items.map((it) => `<li>${it.label ? `<strong>${cleanInline(it.label)}:</strong> ` : ''}${cleanInline(it.value)}</li>`).join('')}</ul>` : '');
+  const parts = [...get(/^Fases/i), ...get(/^Descanso|PCT/i), ...get(/^Notas/i)];
+  if (!parts.length) return '';
+  return `<details class="proto"${open ? ' open' : ''}><summary>Tu protocolo · ${cleanInline(f.title)}</summary>
+    ${parts.map((x) => `<p><strong>${cleanInline(x.key)}:</strong> ${cleanInline(x.value)}</p>${items(x)}`).join('')}
+    <p class="small"><a href="#/ficha/${esc(g.key)}">Ver la ficha completa</a> · Es tu texto. Las cantidades que registras o ajustas son tuyas.</p></details>`;
 }

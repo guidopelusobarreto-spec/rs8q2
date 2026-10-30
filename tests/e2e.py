@@ -346,6 +346,10 @@ with sync_playwright() as p:
     go(page, '#/'); page.wait_for_timeout(500)
     cr = page.locator('.dose', has_text='Creatina')
     ok('hoy: la nota y la cantidad nueva', 'Tu nota: nota guía e2e' in cr.inner_text() and '4 g' in cr.inner_text())
+    rt = page.locator('.dose', has_text='1 vez por semana (SC)')
+    ok('hoy: tu protocolo como guía, ficha de mujeres', 'Tu protocolo · 2. Retatrutida (Mujeres)' in rt.inner_text() and rt.locator('details.proto').count() == 1)
+    rt.locator('details.proto summary').click(); page.wait_for_timeout(200)
+    ok('hoy: la guía muestra tus notas y advertencias', 'no escalar la dosis' in rt.inner_text())
     cr.locator('button:has-text("Otra cantidad")').click(); page.wait_for_timeout(300)
     dlg(page).locator('[name=amount]').fill('6'); dlg(page).locator('button:has-text("Guardar")').click(); page.wait_for_timeout(600)
     ok('por encima del plan: pregunta si es un ajuste', 'Por encima de tu plan' in dlg(page).inner_text())
@@ -360,6 +364,7 @@ with sync_playwright() as p:
     page.locator('main a', has_text='Creatina').first.click(); page.wait_for_timeout(500)
     t = page.inner_text('#sienta')
     ok('plan: tabla por cantidad con tus marcas', '6 g' in t and 'cefalea e2e' in t)
+    ok('plan: tu protocolo (guía) con la ficha de la sustancia', '13. Creatina' in page.inner_text('#protocolo') and 'Nota diagnóstica' in page.inner_text('#protocolo'))
 
     # fecha de inicio pasada para todo el protocolo y alta retroactiva
     go(page, '#/protocolos'); page.wait_for_timeout(400)

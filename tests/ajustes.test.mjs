@@ -101,3 +101,15 @@ test('modelo: editar una pausa', async () => {
   u = await m.updatePause(a.id, p.id, z.id, { from: '2026-10-21', to: '2026-10-25', note: 'n' });
   assert.deepEqual([u.pauses[0].from, u.pauses[0].to, u.pauses[0].note], ['2026-10-21', '2026-10-25', 'n']);
 });
+
+test('tu protocolo como guía: elige la ficha por número, por sexo o por presentación', async () => {
+  const { protocolFicha } = await import('../js/ajustes.js');
+  const info = { substances: [
+    { key: 'reta', nombre: 'Sust A', productIds: ['pa'], texto: '1. Sust A (Hombres)\n * Notas y advertencias: H\n\n2. Sust A (Mujeres)\n * Notas y advertencias: M' },
+    { key: 'b', nombre: 'Sust B', productIds: ['pb'], texto: '3. Sust B (Hombres y Mujeres)\n * Notas: B' }] };
+  assert.match(protocolFicha(info, { substance: 'Sust A', source: 'Biblioteca: x · Protocolo v3, ficha 2' }).text, /^2\./);
+  assert.match(protocolFicha(info, { substance: 'Sust A', source: 'Biblioteca: comb · Parte 2' }, 'mujer').text, /^2\./);
+  assert.match(protocolFicha(info, { substance: 'Sust A' }, 'hombre').text, /^1\./);
+  assert.equal(protocolFicha(info, { substance: '', productId: 'pb' }).key, 'b');
+  assert.equal(protocolFicha(info, { substance: 'Otra', productId: 'zz' }), null);
+});

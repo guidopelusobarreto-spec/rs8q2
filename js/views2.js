@@ -2,7 +2,7 @@
 import { esc, $, $$, opt, field, inp, toast, dialog, fmtDate, fmtNum, readForm, showErr, download, lineChart } from './ui.js';
 import { parseImportText, importPlans, parsePhaseLine, phaseText, PLAN_MODES, PCT_STATUS, PCT_UNDEFINED, REVIEW_DAYS, ADMIN_STATUS, planEnd, planBaseEnd, pausesOf, hasOpenPause, runSiblings, addDays, diffDays, todayISO, weightChange, toISODate } from './model.js';
 import { pauseText, pauseDialog, resumeDialog, removePauseDialog, editPauseDialog } from './pausas.js';
-import { notesList, noteDialog, feelTable, adjustDialog, startDialog, backfillDialog } from './ajustes.js';
+import { notesList, noteDialog, feelTable, adjustDialog, startDialog, backfillDialog, guideContext, guideHTML } from './ajustes.js';
 import { COLLECTIONS } from './store.js';
 import { WHO_ACTIVITY, EMERGENCY } from './safety.js';
 import { productOptions, alertBox, dehydration, DEHYDRATION_TEXT, ruoBadge } from './views1.js';
@@ -112,6 +112,7 @@ export async function planDetalle(view, r, ctx) {
   const t = todayISO();
   const admins = await m.list('administrations', ctx.profileId);
   const sibs = runSiblings(await m.list('plans', ctx.profileId), p), sibLabels = await m.planLabels(sibs), labelOf = (x) => sibLabels.get(x.id) || x.name || 'plan';
+  const protoHTML = guideHTML((await guideContext(ctx, [p]))(p), { open: true });
   const pauses = pausesOf(p), base = planBaseEnd(p), shift = base && end ? diffDays(base, end) : 0;
   const pausesCard = `<div class="card" id="pausas"><h2 style="margin-top:0">Pausas</h2>
     <p class="small muted">Los días en pausa no cuentan: las fases siguientes y el fin se retrasan esos días.${sibs.length > 1 ? ` Se aplican a todo el protocolo (${sibs.length} sustancias aplicadas juntas).` : ''}</p>
@@ -135,6 +136,7 @@ export async function planDetalle(view, r, ctx) {
       <button id="startBtn" class="sec">Fecha de inicio${sibs.length > 1 ? ' del protocolo' : ''}</button>${p.start < t ? '<button id="backBtn" class="sec">Días anteriores</button>' : ''}</div>
       ${p.trackFrom ? `<p class="small">El cumplimiento cuenta desde el ${fmtDate(p.trackFrom)}.</p>` : ''}
       ${p.history?.length ? `<details><summary>Historial de modificaciones (${p.history.length})</summary><ul class="small">${p.history.map((h) => `<li>${new Date(h.at).toLocaleString('es-ES')}: ${h.changes.map((c) => esc(c.field)).join(', ')}</li>`).join('')}</ul></details>` : ''}</div>
+    ${protoHTML ? `<div class="card" id="protocolo"><h2 style="margin-top:0">Tu protocolo (guía)</h2>${protoHTML}</div>` : ''}
     ${pausesCard}
     <div class="card" id="notas"><h2 style="margin-top:0">Tus notas (guía)</h2><p class="small muted">Las escribes tú; salen en Hoy cuando toca (siempre, en unas semanas o durante una pausa).</p>
       ${p.guideNotes?.length ? `<ul class="plain">${notesList(p)}</ul>` : '<p class="muted">Sin notas.</p>'}<div class="row noprint"><button id="addNote" class="sec">Añadir nota</button></div></div>

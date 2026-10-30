@@ -18,7 +18,7 @@ La frecuencia de cada fase se lee del texto escrito por el usuario («3 veces po
 
 **Pausas**: un plan (o todo un protocolo aplicado junto) se puede pausar desde el plan o desde el Cronograma, con fecha de vuelta o sin ella («Reanudar» al volver). Los días en pausa no cuentan: las fases siguientes, las semanas y el fin se retrasan esos días.
 
-**Ajustes personales**: «Cambiar cantidad» de una fase desde una semana (lo anterior queda igual y se anota «Ajustado por ti»); si registras más que tu plan, la app pregunta si ha sido un ajuste tuyo antes de abrir la ventana de seguridad; en cada toma puedes marcar cómo te sentó (bien / regular / efectos secundarios) y el plan resume tus marcas por cantidad, sin recomendar nada; notas-guía escritas por ti que salen en Hoy siempre, en unas semanas o durante una pausa; «Fecha de inicio» de todo un protocolo (para ciclos que ya llevabas) con la opción de registrar como hechas las tomas anteriores o de contar el cumplimiento desde hoy; pausas editables.
+**Ajustes personales**: «Cambiar cantidad» de una fase desde una semana (lo anterior queda igual y se anota «Ajustado por ti»); si registras más que tu plan, la app pregunta si ha sido un ajuste tuyo antes de abrir la ventana de seguridad; en cada toma puedes marcar cómo te sentó (bien / regular / efectos secundarios) y el plan resume tus marcas por cantidad, sin recomendar nada; notas-guía escritas por ti que salen en Hoy siempre, en unas semanas o durante una pausa; «Tu protocolo»: en cada toma de Hoy (plegado) y en el plan, el texto literal de la ficha de esa sustancia de tu biblioteca (fases, descanso o PCT, notas y advertencias), elegida por la ficha que cita el plan o por sexo; «Fecha de inicio» de todo un protocolo (para ciclos que ya llevabas) con la opción de registrar como hechas las tomas anteriores o de contar el cumplimiento desde hoy; pausas editables.
 
 **Sin cobertura o con mala señal**: el service worker espera a la red como máximo 3 s si ya hay copia; después abre desde la caché y actualiza en segundo plano.
 
@@ -36,8 +36,8 @@ La frecuencia de cada fase se lee del texto escrito por el usuario («3 veces po
 - `js/views1.js`, `js/views2.js`, `js/ui.js`, `js/notify.js` — interfaz, PIN, notificaciones, .ics
 
 ## Pruebas
-- `npm test` — 47 pruebas de la lógica (Node 22, sin dependencias); 2 necesitan `LIB_FILE=<biblioteca.json>`.
-- `LIB_FILE=<biblioteca.json> python3 -I tests/e2e.py http://localhost:8765/` — 115 comprobaciones de aceptación en Chromium (Playwright), a 320 y 360 px.
+- `npm test` — 48 pruebas de la lógica (Node 22, sin dependencias); 2 necesitan `LIB_FILE=<biblioteca.json>`.
+- `LIB_FILE=<biblioteca.json> python3 -I tests/e2e.py http://localhost:8765/` — 118 comprobaciones de aceptación en Chromium (Playwright), a 320 y 360 px.
 - `python3 -I tests/e2e_red_lenta.py .` — arranque con la red a 8 s (debe abrir en menos de 6 s).
 
 ## Limitaciones conocidas
