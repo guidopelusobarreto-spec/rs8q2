@@ -392,6 +392,20 @@ with sync_playwright() as p:
     ok('cumplimiento desde hoy: anotado en el plan', 'El cumplimiento cuenta desde el' in page.inner_text('main') and 'Semanas 1–16' in page.inner_text('main'))
     page.select_option('#profileSel', label='Ana'); page.wait_for_timeout(300)
 
+    # tomas sin plan: el registro propone el plan y la previsión las reconoce
+    tom = iso(today + dt.timedelta(days=1))
+    go(page, '#/registro'); page.wait_for_selector('main form [name=productId]', state='attached')
+    page.fill('main form [name=date]', tom); page.select_option('main form [name=productId]', 'crea500'); page.wait_for_timeout(200)
+    ok('registro: propone el único plan activo de esa presentación', 'Creatina' in page.locator('main form [name=planId] option:checked').inner_text())
+    page.select_option('main form [name=planId]', ''); page.fill('main form [name=amount]', '4'); page.fill('main form [name=unit]', 'g')
+    page.select_option('main form [name=status]', 'realizado'); page.click('main form button:has-text("Guardar registro")'); page.wait_for_timeout(700)
+    go(page, f'#/calendario?v=dia&d={tom}'); page.wait_for_timeout(500)
+    ok('calendario: una toma sin plan cuenta para la previsión', page.inner_text('main').count('Creatina') == 1)
+    go(page, f'#/historial?from={tom}&to={tom}'); page.wait_for_timeout(400)
+    page.locator('main li', has_text='Creatina').locator('button:has-text("Confirmar / corregir")').click(); page.wait_for_timeout(300)
+    ok('historial: se puede vincular la toma a un plan', dlg(page).locator('[name=planId] option', has_text='Creatina').count() >= 1)
+    dlg(page).locator('[data-close]').first.click(); page.wait_for_timeout(200)
+
     # importador de texto
     go(page, '#/planes'); page.wait_for_timeout(200); page.click('#imp')
     page.fill('#impTxt', 'PLAN: Malo\nPERSONA: Nadie\nSUSTANCIA: reta15\nCOSA RARA')

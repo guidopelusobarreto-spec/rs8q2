@@ -79,6 +79,9 @@ export function scheduleText(sc) {
 }
 
 const DONE = new Set(['realizado', 'retrasado']);
+// Un registro cuenta para un plan si está vinculado a él o si no tiene plan y es de la misma presentación
+// (p. ej. una toma anotada desde un recordatorio o desde «Registrar» sin elegir plan).
+export const belongsTo = (a, plan) => a.planId === plan.id || (!a.planId && !!plan.productId && a.productId === plan.productId);
 const activePhase = (plan, date) => {
   if (plan.closed || !plan.start || date < plan.start) return null;
   const end = planEnd(plan);
@@ -106,14 +109,14 @@ export function slotsOn(plan, date) {
 // Agenda de un día: tomas fijas con su estado, cupos semanales, a demanda y fases sin frecuencia reconocida.
 export function buildAgenda({ plans, admins, date, snoozes = {}, now = new Date().toISOString() }) {
   const out = { date, slots: [], weekly: [], demand: [], unknown: [] };
-  const byPlan = (pid, from, to) => admins.filter((a) => a.planId === pid && a.date >= from && a.date <= to && a.status !== 'cancelado');
+  const byPlan = (plan, from, to) => admins.filter((a) => belongsTo(a, plan) && a.date >= from && a.date <= to && a.status !== 'cancelado');
   for (const plan of plans) {
     const ph = activePhase(plan, date);
     if (!ph) continue;
     const sc = scheduleFor(plan, ph);
     if (sc.kind === 'weekly' || sc.kind === 'demand') {
       const w = weekRange(plan, ph.week);
-      const list = byPlan(plan.id, w.from, w.to).filter((a) => DONE.has(a.status));
+      const list = byPlan(plan, w.from, w.to).filter((a) => DONE.has(a.status));
       const item = { plan, phase: ph, sched: sc, weekStart: w.from, weekEnd: w.to, count: list.length, today: list.filter((a) => a.date === date) };
       if (sc.kind === 'weekly') out.weekly.push({ ...item, needed: sc.perWeek || 1 });
       else out.demand.push(item);
@@ -121,7 +124,7 @@ export function buildAgenda({ plans, admins, date, snoozes = {}, now = new Date(
     }
     if (sc.kind === 'unknown') { out.unknown.push({ plan, phase: ph, sched: sc }); continue; }
     const slots = slotsOn(plan, date);
-    const recs = byPlan(plan.id, date, date).filter((a) => DONE.has(a.status) || a.status === 'omitido').sort((a, b) => a.time.localeCompare(b.time));
+    const recs = byPlan(plan, date, date).filter((a) => DONE.has(a.status) || a.status === 'omitido').sort((a, b) => a.time.localeCompare(b.time));
     slots.forEach((s, i) => {
       const a = recs[i];
       s.admin = a || null;
@@ -139,7 +142,7 @@ export function adherence(plan, admins, until) {
   let expected = 0, done = 0;
   const end = planEnd(plan);
   const last = end && end < until ? end : until;
-  const mine = admins.filter((a) => a.planId === plan.id && DONE.has(a.status));
+  const mine = admins.filter((a) => belongsTo(a, plan) && DONE.has(a.status));
   const from = plan.trackFrom && plan.trackFrom > plan.start ? plan.trackFrom : plan.start; // ciclos dados de alta tarde
   for (let d = from; d && d <= last; d = addDays(d, 1)) {
     const n = slotsOn(plan, d).length;
@@ -157,7 +160,7 @@ export function adherence(plan, admins, until) {
 // Días fijos: las que falten ese día. Cupo semanal: solo semanas completas, en los primeros días activos libres. A demanda: nada.
 export function missingDoses(plan, admins, until) {
   const out = [], seenWeeks = new Set();
-  const mine = admins.filter((a) => a.planId === plan.id && (DONE.has(a.status) || a.status === 'omitido'));
+  const mine = admins.filter((a) => belongsTo(a, plan) && (DONE.has(a.status) || a.status === 'omitido'));
   const end = planEnd(plan), last = end && end < until ? end : until;
   const at = (sc, i = 0) => sc.times[i] || MOMENTS[sc.moments[i] || sc.moments[0]]?.at || '09:00';
   for (let d = plan.start; d && d <= last; d = addDays(d, 1)) {

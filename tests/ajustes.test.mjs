@@ -113,3 +113,21 @@ test('tu protocolo como guía: elige la ficha por número, por sexo o por presen
   assert.equal(protocolFicha(info, { substance: '', productId: 'pb' }).key, 'b');
   assert.equal(protocolFicha(info, { substance: 'Otra', productId: 'zz' }), null);
 });
+
+test('una toma sin plan de la misma presentación cuenta para la previsión del plan', async () => {
+  const { buildAgenda } = await import('../js/schedule.js');
+  const plan = { id: 'p', productId: 'reta15', start: '2026-09-04', duration: 16, durationUnit: 'semanas', phases: [ph(1, 16, 2, 'viernes a las 21:30')] };
+  const rec = (extra) => ({ id: 'a', productId: 'reta15', date: '2026-10-02', time: '21:30', status: 'realizado', planId: '', ...extra });
+  assert.equal(buildAgenda({ plans: [plan], admins: [rec()], date: '2026-10-02' }).slots[0].status, 'done', 'sin plan, misma presentación');
+  assert.equal(buildAgenda({ plans: [plan], admins: [rec({ planId: 'otro' })], date: '2026-10-02' }).slots[0].status, 'pending', 'vinculada a otro plan: no cuenta');
+  assert.equal(buildAgenda({ plans: [plan], admins: [rec({ productId: 'reta30' })], date: '2026-10-02' }).slots[0].status, 'pending', 'otra presentación: no cuenta');
+  assert.equal(adherence(plan, [rec()], '2026-10-02').done, 1);
+});
+
+test('modelo: vincular una toma a un plan de otro perfil no se permite', async () => {
+  const { m, a } = await mk();
+  const b = await m.createProfile({ name: 'Bruno' });
+  const pb = await m.addPlan(b.id, { mode: 'duracion', start: '2026-10-19', duration: 4, durationUnit: 'semanas' });
+  const { admin } = await m.addAdministration(a.id, { productId: 'reta15', date: '2026-10-20', time: '09:00', status: 'realizado' });
+  await assert.rejects(m.updateAdministration(a.id, admin.id, { planId: pb.id }), /otro perfil/);
+});

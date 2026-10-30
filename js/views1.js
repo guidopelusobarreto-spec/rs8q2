@@ -97,7 +97,16 @@ export async function registro(view, r, ctx) {
       Es el contenido declarado del envase, <strong>no una cantidad a administrar</strong>.</p>` : '';
     f.lotId.innerHTML = '<option value="">— Ninguno —</option>' + lots.filter((l) => !p || l.productId === p.id).map((l) => opt(l.id, `${l.lot || 'sin nº'}${l.expiry ? ' · cad. ' + fmtDate(l.expiry) : ''}${l.unitsLeft != null ? ` · quedan ${l.unitsLeft}` : ''}`)).join('');
   };
-  f.productId.addEventListener('change', upd); upd();
+  // Si hay un único plan activo de esa presentación en esa fecha, se asocia solo (puedes cambiarlo).
+  let autoPlan = !f.planId.value;
+  const pickPlan = () => {
+    if (!autoPlan) return;
+    const date = f.date.value, prod = f.productId.value;
+    const act = plans.filter((p) => !p.closed && prod && p.productId === prod && p.start <= date && (!planEnd(p) || date <= planEnd(p)));
+    f.planId.value = act.length === 1 ? act[0].id : '';
+  };
+  f.planId.addEventListener('change', () => { autoPlan = false; });
+  f.productId.addEventListener('change', () => { upd(); pickPlan(); }); f.date.addEventListener('change', pickPlan); upd(); pickPlan();
   f.addEventListener('submit', async (e) => {
     e.preventDefault();
     const d = readForm(f);
@@ -156,6 +165,7 @@ export async function historial(view, r, ctx) {
   const products = await m.products();
   const q = r.query;
   const rows = await m.history(pid, { productId: q.prod, from: q.from, to: q.to, status: q.st });
+  const plans = (await m.list('plans', pid)).sort((x, y) => y.start.localeCompare(x.start));
   const pname = (id) => products.find((p) => p.id === id);
   view.innerHTML = `<h1>Historial</h1>
     <form class="card noprint" id="flt"><div class="grid">
@@ -178,6 +188,7 @@ export async function historial(view, r, ctx) {
       ${field('Estado', `<select name="status">${Object.entries(ADMIN_STATUS).map(([k, v]) => opt(k, v, a.status)).join('')}</select>`)}
       <div class="grid">${field('Fecha', inp('date', a.date, 'type="date"'))}${field('Hora', inp('time', a.time, 'type="time"'))}
       ${field('Cantidad', inp('amount', a.amount ?? '', 'type="number" step="any" min="0"'))}${field('Unidad', inp('unit', a.unit, 'list="units"'))}</div>
+      ${field('Plan asociado', `<select name="planId"><option value="">— Ninguno —</option>${plans.map((p) => opt(p.id, `${p.name || PLAN_MODES[p.mode]} (desde ${fmtDate(p.start)})`, a.planId)).join('')}</select>`)}
       ${feelSelect(a.feel)}
       ${field('Síntomas posteriores', `<textarea name="symptoms">${esc(a.symptoms)}</textarea>`)}
       ${field('Efectos adversos', `<textarea name="adverse">${esc(a.adverse)}</textarea>`)}

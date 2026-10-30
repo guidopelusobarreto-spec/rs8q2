@@ -450,6 +450,7 @@ export class Model {
   // Confirmar o corregir conserva el historial de cambios.
   async updateAdministration(profileId, id, patch) {
     if (patch.status) must(ADMIN_STATUS[patch.status], 'Estado no válido');
+    if (patch.planId) { const pl = await this.store.get('plans', patch.planId); must(pl && pl.profileId === profileId, 'El plan pertenece a otro perfil'); }
     return this._update('administrations', id, patch, profileId);
   }
   async history(profileId, { productId, from, to, status } = {}) {
