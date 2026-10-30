@@ -123,6 +123,9 @@ h2.grp { font-size: .82rem; text-transform: uppercase; letter-spacing: .06em; co
 .dose.done { background: var(--ok-bg); border-color: transparent; }
 .dose.done .acts, .dose.omitted .acts { display: flex; justify-content: space-between; align-items: center; }
 .dose.omitted { opacity: .75; }
+.dose.paused { background: var(--surface-2); border-style: dashed; }
+.dose.paused::before { opacity: .45; }
+.dose .acts a.btn { min-height: 2.6rem; display: inline-flex; align-items: center; font-size: .85rem; }
 .empty { text-align: center; padding: 1.4rem 1rem; color: var(--muted); }
 .daynav { display: flex; align-items: center; gap: .5rem; margin: -.3rem 0 .8rem; }
 .daynav .muted { flex: 1; }

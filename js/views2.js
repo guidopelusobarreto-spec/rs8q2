@@ -1,6 +1,7 @@
 // Calendario, ciclos, postciclo, recordatorios, peso, hábitos, informes, incidencias y ajustes.
 import { esc, $, $$, opt, field, inp, toast, dialog, fmtDate, fmtNum, readForm, showErr, download, lineChart } from './ui.js';
-import { parseImportText, importPlans, parsePhaseLine, phaseText, PLAN_MODES, PCT_STATUS, PCT_UNDEFINED, REVIEW_DAYS, ADMIN_STATUS, planEnd, addDays, diffDays, todayISO, weightChange, toISODate } from './model.js';
+import { parseImportText, importPlans, parsePhaseLine, phaseText, PLAN_MODES, PCT_STATUS, PCT_UNDEFINED, REVIEW_DAYS, ADMIN_STATUS, planEnd, planBaseEnd, pausesOf, hasOpenPause, runSiblings, addDays, diffDays, todayISO, weightChange, toISODate } from './model.js';
+import { pauseText, pauseDialog, resumeDialog, removePauseDialog } from './pausas.js';
 import { COLLECTIONS } from './store.js';
 import { WHO_ACTIVITY, EMERGENCY } from './safety.js';
 import { productOptions, alertBox, dehydration, DEHYDRATION_TEXT, ruoBadge } from './views1.js';
@@ -109,6 +110,13 @@ export async function planDetalle(view, r, ctx) {
   const rep = days ? await m.report(ctx.profileId, { planId: p.id, days }) : null;
   const t = todayISO();
   const admins = await m.list('administrations', ctx.profileId);
+  const sibs = runSiblings(await m.list('plans', ctx.profileId), p), sibLabels = await m.planLabels(sibs), labelOf = (x) => sibLabels.get(x.id) || x.name || 'plan';
+  const pauses = pausesOf(p), base = planBaseEnd(p), shift = base && end ? diffDays(base, end) : 0;
+  const pausesCard = `<div class="card" id="pausas"><h2 style="margin-top:0">Pausas</h2>
+    <p class="small muted">Los días en pausa no cuentan: las fases siguientes y el fin se retrasan esos días.${sibs.length > 1 ? ` Se aplican a todo el protocolo (${sibs.length} sustancias aplicadas juntas).` : ''}</p>
+    ${pauses.length ? `<ul class="plain">${pauses.map((x) => `<li><strong>${esc(pauseText(x))}</strong>${x.note ? `<br><span class="small">${esc(x.note)}</span>` : ''}
+      <div class="row noprint" style="margin-top:.3rem">${x.to ? '' : `<button class="ok slim" data-resume="${x.id}">Reanudar</button>`}<button class="ghost slim" data-unpause="${x.id}">Borrar</button></div></li>`).join('')}</ul>` : '<p class="muted">Sin pausas.</p>'}
+    ${p.closed || hasOpenPause(p) ? '' : `<div class="row noprint"><button id="pause" class="sec">${sibs.length > 1 ? 'Pausar el protocolo' : 'Pausar'}</button></div>`}</div>`;
   const nextReview = p.reviewEveryDays > 0 ? addDays(p.start, (Math.floor(diffDays(p.start, t) / p.reviewEveryDays) + 1) * p.reviewEveryDays) : null;
   const lastReview = p.reviewEveryDays > 0 && diffDays(p.start, t) >= p.reviewEveryDays ? addDays(p.start, Math.floor(diffDays(p.start, t) / p.reviewEveryDays) * p.reviewEveryDays) : null;
   view.innerHTML = `<p><a href="#/planes">← Ciclos y periodos</a></p><h1>${esc(p.name || PLAN_MODES[p.mode])}</h1>
@@ -116,7 +124,7 @@ export async function planDetalle(view, r, ctx) {
     ${p.mode === 'continuo' ? '<div class="alert info">El seguimiento continuo organiza revisiones; no es una recomendación para continuar ninguna sustancia indefinidamente.</div>' : ''}
     ${(await m.alerts(ctx.profileId)).filter((a) => a.ref === p.id).map(alertBox).join('')}
     <div class="card"><dl class="kv"><dt>Modalidad</dt><dd>${esc(PLAN_MODES[p.mode])}</dd><dt>Sustancia</dt><dd>${esc(prod?.substance || '—')}</dd>
-      <dt>Inicio</dt><dd>${fmtDate(p.start)}</dd><dt>Fin</dt><dd>${end ? fmtDate(end) + (p.end ? '' : ' (calculado por duración)') : 'Sin fecha final registrada'}</dd>
+      <dt>Inicio</dt><dd>${fmtDate(p.start)}</dd><dt>Fin</dt><dd>${end ? fmtDate(end) + (p.end ? '' : ' (calculado por duración)') : 'Sin fecha final registrada'}${shift ? `<br><span class="small">Incluye ${shift} ${shift === 1 ? 'día' : 'días'} de pausa (sin pausas: ${fmtDate(base)})${hasOpenPause(p) ? '. Provisional: supone que reanudas mañana' : ''}.</span>` : ''}</dd>
       <dt>Cantidad del plan</dt><dd>${p.plannedAmount != null ? `${fmtNum(p.plannedAmount, 4)} ${esc(p.plannedUnit)}` : '—'}</dd><dt>Pauta anotada</dt><dd>${esc(p.scheduleNote || '—')}</dd>
       <dt>Fases del protocolo</dt><dd>${p.phases?.length ? p.phases.map((f) => esc(phaseText(f))).join('<br>') : '—'}</dd>
       <dt>Revisión periódica</dt><dd>${p.reviewEveryDays ? `cada ${p.reviewEveryDays} días · próxima ${fmtDate(nextReview)}` : '—'}</dd>
@@ -124,6 +132,7 @@ export async function planDetalle(view, r, ctx) {
       <div class="row noprint" style="margin-top:.6rem"><button id="edit" class="sec">Editar</button>${lastReview ? `<button id="rev" class="sec">Marcar revisión del ${fmtDate(lastReview)} como hecha</button>` : ''}<button id="close" class="sec">${p.closed ? 'Reabrir' : 'Cerrar plan'}</button>
       <a class="btn sec" href="#/pct?ciclo=${p.id}">Seguimiento postciclo</a></div>
       ${p.history?.length ? `<details><summary>Historial de modificaciones (${p.history.length})</summary><ul class="small">${p.history.map((h) => `<li>${new Date(h.at).toLocaleString('es-ES')}: ${h.changes.map((c) => esc(c.field)).join(', ')}</li>`).join('')}</ul></details>` : ''}</div>
+    ${pausesCard}
     ${p.phases?.length ? `<div class="card"><h2 style="margin-top:0">Frecuencia y cumplimiento</h2>
       ${(() => { const ad = adherence(p, admins, t); return `<p>Cumplimiento hasta hoy: <strong>${ad.pct == null ? '—' : `${ad.done} de ${ad.expected} (${ad.pct} %)`}</strong></p>`; })()}
       <ul class="plain">${p.phases.map((f, i) => { const sc = scheduleFor(p, f); return `<li><strong>${esc(phaseText(f))}</strong><br><span class="small">Se entiende: ${esc(scheduleText(sc))}${sc.overridden ? ' (corregido por ti)' : ''}${sc.notes.length ? ` · ${esc(sc.notes.join(' · '))}` : ''}</span>
@@ -137,6 +146,10 @@ export async function planDetalle(view, r, ctx) {
     if (ok) planDetalle(view, r, ctx);
   });
   $('#rev')?.addEventListener('click', async () => { await m.markReviewDone(ctx.profileId, p.id, lastReview); planDetalle(view, r, ctx); });
+  const again = () => planDetalle(view, r, ctx);
+  $('#pause')?.addEventListener('click', async () => { if (await pauseDialog(ctx, sibs, labelOf)) again(); });
+  $$('[data-resume]').forEach((b) => b.addEventListener('click', async () => { if (await resumeDialog(ctx, sibs, pauses.find((x) => x.id === b.dataset.resume), labelOf)) again(); }));
+  $$('[data-unpause]').forEach((b) => b.addEventListener('click', async () => { if (await removePauseDialog(ctx, sibs, pauses.find((x) => x.id === b.dataset.unpause), labelOf)) again(); }));
   $$('[data-freq]').forEach((btn) => btn.addEventListener('click', async () => {
     const f = p.phases[btn.dataset.freq], sc = scheduleFor(p, f);
     const ok = await dialog(`<form><h2>Frecuencia de la fase</h2><p class="small">Tu texto: «${esc(f.frequency || '—')}». No se cambia: solo se corrige cómo lo entiende la pantalla Hoy.</p>

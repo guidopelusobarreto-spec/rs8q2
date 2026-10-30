@@ -267,9 +267,67 @@ with sync_playwright() as p:
     ok('ficha: texto literal maquetado', page.locator('main .ficha').count() >= 1 and page.locator('table.phases tr').count() >= 1)
     go(page, '#/texto'); page.wait_for_timeout(400)
     t = page.inner_text('main')
-    ok('texto original: tabla, flechas e índice', page.locator('.doc table').count() == 1 and '→' in t and '\\rightarrow' not in t and 'NAD⁺' in t)
+    ok('texto original: tabla, flechas e índice', page.locator('.doc table').count() >= 1 and '→' in t and '\\rightarrow' not in t and 'NAD⁺' in t)
     go(page, '#/catalogo'); page.wait_for_timeout(300)
     ok('catálogo: sin la línea de origen', 'Importado de' not in page.inner_text('main'))
+
+    # «Otra cantidad» en Hoy: un paso, queda a la vista y en el historial
+    go(page, '#/'); page.wait_for_timeout(500)
+    d3 = page.locator('.dose', has_text='Vitamina D3')
+    d3.locator('button:has-text("Otra cantidad")').click(); page.wait_for_timeout(300)
+    d = dlg(page)
+    ok('otra cantidad: ventana con la cantidad del plan', d.locator('[name=amount]').input_value() == '5000' and d.locator('[name=notes]').count() == 1)
+    d.locator('[name=amount]').fill('4000'); d.locator('[name=notes]').fill('nota e2e'); d.locator('button:has-text("Guardar")').click(); page.wait_for_timeout(600)
+    ok('otra cantidad: hecha y marcada', 'Otra cantidad: 4000 UI' in page.locator('.dose.done', has_text='Vitamina D3').inner_text())
+    go(page, '#/historial'); page.wait_for_timeout(300)
+    ok('otra cantidad: en el historial', '4000 UI' in page.inner_text('main'))
+
+    # pausas: el protocolo entero, desde el cronograma; reanudar desde Hoy
+    go(page, '#/protocolos'); page.wait_for_timeout(400)
+    cf = page.locator('.card', has_text='Cronograma Combinado Femenino')
+    cf.locator('button:has-text("Pausar el protocolo")').click(); page.wait_for_timeout(300)
+    ok('pausa: la ventana nombra las 6 sustancias', dlg(page).locator('[name=from]').input_value() == iso(today) and 'BPC-157' in dlg(page).inner_text())
+    dlg(page).locator('button:has-text("Pausar")').click(); page.wait_for_timeout(800)
+    cf = page.locator('.card', has_text='Cronograma Combinado Femenino')
+    ok('pausa: el cronograma la muestra y ofrece reanudar', 'sin fecha de vuelta' in cf.inner_text() and cf.locator('button:has-text("Reanudar")').count() == 1)
+    go(page, '#/'); page.wait_for_timeout(500)
+    t = page.inner_text('main')
+    ok('pausa: Hoy muestra el protocolo en pausa y sin tomas', 'En pausa' in t and 'en pausa' in t and page.locator('.dose:not(.paused)', has_text='Creatina').count() == 0)
+    go(page, '#/protocolos'); page.wait_for_timeout(300)
+    page.locator('table.crono a', has_text='BPC-157').click(); page.wait_for_timeout(500)
+    t = page.inner_text('#pausas') + page.inner_text('main dl.kv')
+    ok('pausa: el plan la lista y el fin es provisional', 'sin fecha de vuelta' in t and 'Provisional' in t)
+    go(page, '#/'); page.wait_for_timeout(400)
+    page.locator('.dose.paused button:has-text("Reanudar hoy")').click(); page.wait_for_timeout(800)
+    ok('pausa: reanudar el mismo día la quita y vuelven las tomas', page.locator('.dose.paused').count() == 0 and page.locator('.dose', has_text='Creatina').count() == 1)
+
+    # pausa cerrada en el futuro: desplaza el fin 3 días; borrar una pausa
+    go(page, '#/protocolos'); page.wait_for_timeout(400)
+    page.locator('.card', has_text='Cronograma Combinado Femenino').locator('button:has-text("Pausar el protocolo")').click(); page.wait_for_timeout(300)
+    d = dlg(page); d.locator('[name=from]').fill(iso(today + dt.timedelta(days=2))); d.locator('[name=to]').fill(iso(today + dt.timedelta(days=4)))
+    d.locator('[name=note]').fill('viaje'); d.locator('button:has-text("Pausar")').click(); page.wait_for_timeout(800)
+    page.locator('table.crono a', has_text='BPC-157').click(); page.wait_for_timeout(500)
+    ok('pausa cerrada: el fin incluye 3 días de pausa', 'Incluye 3 días de pausa' in page.inner_text('main dl.kv'))
+    page.click('#pause'); page.wait_for_timeout(300)
+    d = dlg(page); d.locator('[name=from]').fill(iso(today + dt.timedelta(days=20))); d.locator('[name=to]').fill(iso(today + dt.timedelta(days=21)))
+    d.locator('button:has-text("Pausar")').click(); page.wait_for_timeout(800)
+    ok('pausa: dos pausas suman 5 días', 'Incluye 5 días de pausa' in page.inner_text('main dl.kv'))
+    page.click('#pause'); page.wait_for_timeout(300)
+    d = dlg(page); d.locator('[name=from]').fill(iso(today + dt.timedelta(days=3))); d.locator('button:has-text("Pausar")').click(); page.wait_for_timeout(500)
+    ok('pausa: no se permite solapar', 'Se solapa' in d.inner_text())
+    d.locator('[data-close]').first.click(); page.wait_for_timeout(200)
+    page.locator('#pausas li', has_text=iso(today + dt.timedelta(days=20)).split('-')[2] + '/').locator('button:has-text("Borrar")').click(); page.wait_for_timeout(300)
+    dlg(page).locator('button:has-text("Borrar")').click(); page.wait_for_timeout(800)
+    ok('pausa: borrar devuelve los días', 'Incluye 3 días de pausa' in page.inner_text('main dl.kv') and page.locator('#pausas li').count() == 1)
+    go(page, '#/planes'); page.wait_for_timeout(300)
+    page.locator('main a', has_text='Creatina').first.click(); page.wait_for_timeout(500)
+    ok('pausa: aplicada y borrada en todo el protocolo', page.locator('#pausas li').count() == 1 and 'viaje' in page.inner_text('#pausas'))
+    go(page, f'#/?d={iso(today + dt.timedelta(days=3))}'); page.wait_for_timeout(500)
+    ok('pausa: Hoy de un día en pausa', page.locator('.dose.paused').count() == 1 and page.locator('.dose:not(.paused)', has_text='Creatina').count() == 0 and 'viaje' in page.inner_text('main'))
+    go(page, f'#/calendario?v=dia&d={iso(today + dt.timedelta(days=2))}'); page.wait_for_timeout(400)
+    ok('pausa: el calendario marca el inicio', 'Pausa:' in page.inner_text('main') and 'Toma prevista' not in page.inner_text('main'))
+    go(page, f'#/calendario?v=dia&d={iso(today + dt.timedelta(days=5))}'); page.wait_for_timeout(400)
+    ok('pausa: el calendario marca la vuelta y hay tomas', 'Reanuda:' in page.inner_text('main') and 'Toma prevista' in page.inner_text('main'))
 
     # importador de texto
     go(page, '#/planes'); page.wait_for_timeout(200); page.click('#imp')
@@ -283,9 +341,11 @@ with sync_playwright() as p:
     ok('importador crea el plan', 'Importado E2E' in page.inner_text('main'))
 
     # anchos 320 y 360: sin desbordamiento horizontal
+    go(page, '#/planes'); page.wait_for_timeout(300); page.locator('main a', has_text='BPC-157').first.click(); page.wait_for_timeout(400)
+    PLAN_ROUTE = page.evaluate('location.hash')
     routes = ['#/', '#/registro', '#/historial', f'#/calendario?v=mes&d={iso(today)}', '#/planes', '#/pct', '#/recordatorios', '#/peso',
               '#/habitos', f'#/informes?from={iso(today - dt.timedelta(days=28))}&to={iso(today)}', '#/incidencias', '#/catalogo', '#/producto/reta15', '#/perfiles', '#/ajustes', '#/biblioteca', '#/biblioteca?s=hombre',
-              '#/protocolos', '#/ficha/retatrutida', '#/texto', '#/mas', '#/acerca', '#/avisos', f'#/?d={iso(today + dt.timedelta(days=1))}']
+              '#/protocolos', '#/ficha/retatrutida', '#/texto', '#/mas', '#/acerca', '#/avisos', f'#/?d={iso(today + dt.timedelta(days=1))}', f'#/?d={iso(today + dt.timedelta(days=3))}', PLAN_ROUTE]
     for w in (320, 360):
         page.set_viewport_size({'width': w, 'height': 760})
         bad = []

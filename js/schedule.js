@@ -1,6 +1,6 @@
 // Frecuencias: se leen del texto literal de cada fase («1 vez por semana (SC)», «2 veces al día (mañana y noche…)»).
 // La lectura nunca sustituye al texto: se muestra al lado y el usuario puede corregirla por plan (plan.freqOverrides[texto]).
-import { addDays, diffDays, planEnd, phaseFor } from './model.js';
+import { addDays, diffDays, planEnd, planBaseEnd, phaseFor, activeDay, dateOfActiveDay } from './model.js';
 
 export const MOMENTS = { manana: { label: 'Mañana', at: '09:00' }, mediodia: { label: 'Mediodía', at: '13:00' }, tarde: { label: 'Tarde', at: '17:00' }, noche: { label: 'Noche', at: '21:00' } };
 export const DAY_NAMES = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
@@ -86,14 +86,15 @@ const activePhase = (plan, date) => {
   const ph = phaseFor(plan, date);
   return ph && !ph.none ? ph : null;
 };
-const weekRange = (plan, week) => { const from = addDays(plan.start, (week - 1) * 7); return { from, to: addDays(from, 6) }; };
+// Semana del plan en fechas reales: si hay una pausa dentro, la semana se alarga esos días.
+const weekRange = (plan, week) => ({ from: dateOfActiveDay(plan, (week - 1) * 7), to: dateOfActiveDay(plan, week * 7 - 1) });
 
 // Tomas previstas de un plan en una fecha (solo las de día fijo: diaria, días concretos, cada N días).
 export function slotsOn(plan, date) {
   const ph = activePhase(plan, date);
   if (!ph) return [];
   const sc = scheduleFor(plan, ph);
-  const due = sc.kind === 'daily' || (sc.kind === 'days' && sc.days.includes(dow(date))) || (sc.kind === 'everyN' && sc.everyN > 0 && diffDays(plan.start, date) % sc.everyN === 0);
+  const due = sc.kind === 'daily' || (sc.kind === 'days' && sc.days.includes(dow(date))) || (sc.kind === 'everyN' && sc.everyN > 0 && activeDay(plan, date) % sc.everyN === 0);
   if (!due) return [];
   return Array.from({ length: Math.max(1, sc.perDay || 1) }, (_, i) => {
     const time = sc.times[i] || '';
@@ -155,7 +156,7 @@ export const amountText = (f) => (f?.amount == null ? '' : `${f.amount}${f.amoun
 
 // Semanas totales de un plan (para «semana X de N»).
 export function totalWeeks(plan) {
-  const end = planEnd(plan);
+  const end = planBaseEnd(plan); // semanas activas: las pausas no añaden semanas
   if (end) return Math.ceil((diffDays(plan.start, end) + 1) / 7);
   const ph = plan.phases || [];
   return ph.length && ph.every((f) => f.toWeek != null) ? Math.max(...ph.map((f) => f.toWeek)) : null;

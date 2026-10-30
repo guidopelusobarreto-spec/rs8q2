@@ -6,6 +6,7 @@ import { CATEGORY_LABEL, STATUS_LABEL, RUO_LABEL, presentation, totalActive } fr
 import { fichaHTML, splitFichas, cleanInline } from './text.js';
 import { safetyFor, EMERGENCY, SEVERE_SYMPTOMS, SEVERE_SOURCE, CONSULTED } from './safety.js';
 import { refreshProfiles } from './app.js';
+import { pauseText } from './pausas.js';
 
 const UNITS = ['mg', 'mcg', 'UI', 'ml', 'unidad', 'tableta', 'cápsula', 'aplicación', 'gotas'];
 const nowTime = () => new Date().toTimeString().slice(0, 5);
@@ -106,6 +107,7 @@ export async function registro(view, r, ctx) {
       }
       const { admin, check } = await m.addAdministration(pid, d);
       if (check.afterEnd) await dialog(`<h2>Fecha final superada</h2><div class="alert seguridad">Este registro es posterior a la fecha final prevista del plan (${fmtDate(check.planEnd)}). Revisa el plan antes de continuar.</div><p><button data-close>Entendido</button></p>`);
+      if (check.duringPause) await dialog(`<h2>Plan en pausa</h2><div class="alert aviso">Ese día el plan está en pausa (${esc(pauseText(check.duringPause))}). La toma queda guardada; si has vuelto, reanuda el plan para que las fases sigan desde ahí.</div><p><button data-close>Entendido</button></p>`);
       if (check.outsidePhases) await dialog(`<h2>Fuera del protocolo</h2><div class="alert aviso">La fecha cae en la semana ${check.phase.week} del plan y ninguna fase del protocolo la cubre. Revisa el plan.</div><p><button data-close>Entendido</button></p>`);
       if (check.comparable && check.exceeded) await exceedFlow(ctx, admin, check);
       if (dehydration(d.symptoms + ' ' + d.adverse)) await dialog(`<h2>Atención</h2><div class="alert aviso">${DEHYDRATION_TEXT}</div><p><button data-close>Entendido</button></p>`);

@@ -37,7 +37,8 @@ export class ValidationError extends Error {}
 const must = (cond, msg) => { if (!cond) throw new ValidationError(msg); };
 
 // Fecha final calculada solo a partir de datos introducidos. Sin datos → null (nunca se supone una duración).
-export function planEnd(p) {
+// planBaseEnd: el fin tal como se escribió, sin pausas. planEnd: el fin real, desplazado por los días en pausa.
+export function planBaseEnd(p) {
   if (p.end) return p.end;
   if (!p.start || p.duration == null || p.duration === '') return null;
   const n = Number(p.duration);
@@ -45,6 +46,50 @@ export function planEnd(p) {
   if (p.durationUnit === 'semanas') return addDays(p.start, n * 7 - 1);
   if (p.durationUnit === 'meses') return addDays(addMonths(p.start, n), -1);
   return addDays(p.start, n - 1); // días, contando el día de inicio
+}
+export function planEnd(p, today) {
+  if (typeof today !== 'string') today = todayISO(); // también protege de .map(planEnd)
+  const base = planBaseEnd(p);
+  if (!base || !pausesOf(p).length) return base;
+  return dateOfActiveDay(p, diffDays(p.start, base), today);
+}
+
+// ── Pausas: [{ id, from, to ('' = hasta que se reanude), note }]. Los días en pausa no cuentan: las fases y el fin se desplazan. ──
+export const pausesOf = (p) => (Array.isArray(p?.pauses) ? p.pauses : []).filter((x) => isDate(x?.from));
+export function pausedOn(p, date) {
+  return pausesOf(p).find((x) => date >= x.from && (!x.to || date <= x.to)) || null;
+}
+// Días en pausa entre a y b (incluidos). Una pausa abierta llega hasta openTo (por defecto, sin límite).
+function pausedDays(p, a, b, openTo = '9999-12-31') {
+  let n = 0;
+  for (const x of pausesOf(p)) {
+    const f = x.from > a ? x.from : a, end = x.to || (openTo > x.from ? openTo : x.from), t = end < b ? end : b;
+    if (t >= f) n += diffDays(f, t) + 1;
+  }
+  return n;
+}
+// Días activos transcurridos desde el inicio hasta la fecha (0 = primer día).
+export function activeDay(p, date) {
+  return diffDays(p.start, date) - pausedDays(p, p.start, addDays(date, -1));
+}
+// Fecha del día activo n (0 = inicio), saltando las pausas. Una pausa abierta se supone reanudada mañana (fin provisional).
+export function dateOfActiveDay(p, n, today = todayISO()) {
+  let d = addDays(p.start, n);
+  for (let i = 0; i < 500; i++) {
+    const next = addDays(p.start, n + pausedDays(p, p.start, d, today));
+    if (next === d) return d;
+    d = next;
+  }
+  return d;
+}
+export const planWeek = (p, date) => (p.start && date >= p.start ? Math.floor(activeDay(p, date) / 7) + 1 : 0);
+export const hasOpenPause = (p) => pausesOf(p).some((x) => !x.to);
+// Planes aplicados juntos desde la Biblioteca (mismo protocolo y misma fecha de inicio). Un plan suelto solo se tiene a sí mismo.
+export const libraryName = (p) => (p?.source || '').match(/^Biblioteca: (.+?)(?: · |$)/)?.[1] || '';
+export function runSiblings(plans, plan) {
+  const lib = libraryName(plan);
+  if (!lib) return [plan];
+  return [plan, ...plans.filter((x) => x.id !== plan.id && !x.closed && x.start === plan.start && libraryName(x) === lib)]; // el principal, primero
 }
 
 // Fases escritas por el usuario: {fromWeek, toWeek (null = hasta el final), amount, amountMax (rango), unit, frequency, note}. Nada se rellena por defecto.
@@ -78,7 +123,9 @@ export function phaseText(f) {
 }
 export function phaseFor(plan, date) {
   if (!plan?.phases?.length || !plan.start || date < plan.start) return null;
-  const week = Math.floor(diffDays(plan.start, date) / 7) + 1;
+  const week = planWeek(plan, date);
+  const pz = pausedOn(plan, date);
+  if (pz) return { none: true, paused: true, pause: pz, week };
   const f = plan.phases.find((x) => week >= x.fromWeek && week <= (x.toWeek ?? Infinity));
   return f ? { ...f, week } : { none: true, week };
 }
@@ -238,6 +285,36 @@ export class Model {
     return ce !== p.computedEnd ? this.store.put('plans', { ...p, computedEnd: ce }) : p;
   }
 
+  // Pausas: los días en pausa no cuentan y el resto del plan se desplaza. Sin «hasta» = abierta hasta reanudar.
+  async addPause(profileId, planId, { from, to = '', note = '' }) {
+    const p = await this.store.get('plans', planId);
+    must(p && p.profileId === profileId, 'Plan inexistente o de otro perfil');
+    must(isDate(from), 'Indica desde qué día');
+    must(from >= p.start, `La pausa no puede empezar antes del inicio del plan (${esD(p.start)})`);
+    if (to) { must(isDate(to), 'Fecha «hasta» no válida'); must(to >= from, 'La pausa termina antes de empezar'); }
+    const list = pausesOf(p);
+    must(!list.some((x) => overlaps(from, to, x.from, x.to)), 'Se solapa con otra pausa de este plan');
+    const pauses = [...list, { id: uid(), from, to: to || '', note: note || '' }].sort((a, b) => a.from.localeCompare(b.from));
+    return this.updatePlan(profileId, planId, { pauses });
+  }
+  // Reanudar una pausa abierta: el día de vuelta ya cuenta. Si se vuelve el mismo día en que empezó, la pausa desaparece.
+  async resumePause(profileId, planId, pauseId, backOn = this.today()) {
+    const p = await this.store.get('plans', planId);
+    must(p && p.profileId === profileId, 'Plan inexistente o de otro perfil');
+    must(isDate(backOn), 'Fecha de vuelta no válida');
+    const x = pausesOf(p).find((z) => z.id === pauseId);
+    must(x, 'Pausa inexistente');
+    const last = addDays(backOn, -1);
+    const pauses = last < x.from ? pausesOf(p).filter((z) => z.id !== pauseId) : pausesOf(p).map((z) => (z.id === pauseId ? { ...z, to: last } : z));
+    must(!pauses.some((a) => pauses.some((b) => a !== b && overlaps(a.from, a.to, b.from, b.to))), 'Con esa fecha se solaparía con otra pausa');
+    return this.updatePlan(profileId, planId, { pauses });
+  }
+  async removePause(profileId, planId, pauseId) {
+    const p = await this.store.get('plans', planId);
+    must(p && p.profileId === profileId, 'Plan inexistente o de otro perfil');
+    return this.updatePlan(profileId, planId, { pauses: pausesOf(p).filter((z) => z.id !== pauseId) });
+  }
+
   async markReviewDone(profileId, planId, date) {
     const p = await this.store.get('plans', planId);
     must(p && p.profileId === profileId, 'Plan inexistente o de otro perfil');
@@ -266,7 +343,8 @@ export class Model {
     const ph = phaseFor(plan, a.date);
     const ref = ph && !ph.none ? { plannedAmount: ph.amountMax ?? ph.amount, plannedUnit: ph.unit } : plan;
     const cmp = { ...compareToPlan(a.amount, a.unit, ph?.none ? null : ref), phase: ph };
-    if (ph?.none) cmp.outsidePhases = true;
+    if (ph?.paused) cmp.duringPause = ph.pause;
+    else if (ph?.none) cmp.outsidePhases = true;
     const end = plan ? planEnd(plan) : null;
     const afterEnd = !!(end && a.date > end && plan.alerts?.afterEnd !== false);
     return { ...cmp, afterEnd, planEnd: end };
@@ -384,6 +462,10 @@ export class Model {
       const end = planEnd(p);
       add(p.start, p.mode === 'descanso' ? 'descanso' : 'ciclo', `Inicio: ${p.name || PLAN_MODES[p.mode]}`, p.id);
       if (end) add(end, p.mode === 'descanso' ? 'descanso' : 'ciclo', `Fin: ${p.name || PLAN_MODES[p.mode]}`, p.id);
+      for (const x of pausesOf(p)) {
+        add(x.from, 'descanso', `Pausa: ${p.name || PLAN_MODES[p.mode]}`, p.id);
+        if (x.to) add(addDays(x.to, 1), 'ciclo', `Reanuda: ${p.name || PLAN_MODES[p.mode]}`, p.id);
+      }
       for (const d of REVIEW_DAYS) add(addDays(p.start, d), 'revision', `Revisión ${d} días`, p.id);
       if (p.reviewEveryDays > 0) for (let k = 1; addDays(p.start, k * p.reviewEveryDays) <= to; k++) add(addDays(p.start, k * p.reviewEveryDays), 'revision', 'Revisión periódica', p.id);
     }
@@ -606,7 +688,7 @@ export function activeWindow(pl) {
   if (!ph.length) return { from: pl.start, to: end };
   const a = Math.min(...ph.map((f) => f.fromWeek)), open = ph.some((f) => f.toWeek == null);
   const b = Math.max(...ph.map((f) => f.toWeek ?? 0));
-  return { from: addDays(pl.start, (a - 1) * 7), to: open ? end : addDays(pl.start, b * 7 - 1) };
+  return { from: dateOfActiveDay(pl, (a - 1) * 7), to: open ? end : dateOfActiveDay(pl, b * 7 - 1) };
 }
 export function phasesWindow(start, phases, end) { return activeWindow({ start, phases, end }); }
 const overlaps = (a1, b1, a2, b2) => a1 <= (b2 || '9999-12-31') && a2 <= (b1 || '9999-12-31');
