@@ -147,3 +147,16 @@ test('toma adelantada: cuenta como la prevista de otro día', async () => {
   assert.equal(same.forDate, '', 'el mismo día no hace falta');
   await assert.rejects(m.updateAdministration(a.id, admin.id, { forDate: 'x' }), /no válida/);
 });
+
+test('semana por sustancia: cuenta desde su primera fase', async () => {
+  const { substanceWeek, substanceWeekText } = await import('../js/schedule.js');
+  const kiss = { id: 'k', start: '2026-09-18', duration: 17, durationUnit: 'semanas', phases: [ph(3, 8, 150)] };
+  const sw = substanceWeek(kiss, '2026-10-16'); // semana 5 del protocolo
+  assert.deepEqual([sw.week, sw.sub, sw.total, sw.offset], [5, 3, 6, true]);
+  assert.equal(substanceWeekText(sw), 'Semana 3 de 6 · semana 5 del protocolo');
+  assert.ok(substanceWeek(kiss, '2026-09-20').before);
+  assert.ok(substanceWeek(kiss, '2026-11-30').after);
+  const reta = { id: 'r', start: '2026-09-18', duration: 16, durationUnit: 'semanas', phases: [ph(1, 4, 2), ph(5, 16, 4)] };
+  assert.equal(substanceWeekText(substanceWeek(reta, '2026-10-23')), 'Semana 6 de 16');
+  assert.equal(substanceWeek(reta, '2026-09-01'), null);
+});

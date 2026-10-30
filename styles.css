@@ -228,3 +228,4 @@ details.proto { margin: .45rem 0 0; font-size: .85rem; }
 details.proto > summary { cursor: pointer; color: var(--accent); font-weight: 700; padding: .25rem 0; min-height: 2.2rem; display: flex; align-items: center; }
 details.proto p { margin: .3rem 0; } details.proto .doc-list { margin: .2rem 0 .4rem 1.1rem; padding: 0; }
 #protocolo details.proto > summary { color: var(--ink); }
+.dose .freq.wk { color: var(--ink); font-weight: 700; }

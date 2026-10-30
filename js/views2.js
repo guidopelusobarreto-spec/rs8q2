@@ -8,7 +8,7 @@ import { WHO_ACTIVITY, EMERGENCY } from './safety.js';
 import { productOptions, alertBox, dehydration, DEHYDRATION_TEXT, ruoBadge } from './views1.js';
 import { setPin, checkPin, askPermission, notifySupported, remindersToICS, checkDue } from './notify.js';
 import { confirmCompat } from './views3.js';
-import { scheduleFor, scheduleText, adherence, KINDS, DAY_NAMES, MOMENTS } from './schedule.js';
+import { scheduleFor, scheduleText, adherence, KINDS, DAY_NAMES, MOMENTS, substanceWeek, substanceWeekText } from './schedule.js';
 import { saveUI, refreshProfiles, ctx as appCtx, installApp, appInstalledHere, updateLockBtn } from './app.js';
 
 const DOW = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
@@ -126,6 +126,11 @@ export async function planDetalle(view, r, ctx) {
     ${p.mode === 'continuo' ? '<div class="alert info">El seguimiento continuo organiza revisiones; no es una recomendación para continuar ninguna sustancia indefinidamente.</div>' : ''}
     ${(await m.alerts(ctx.profileId)).filter((a) => a.ref === p.id).map(alertBox).join('')}
     <div class="card"><dl class="kv"><dt>Modalidad</dt><dd>${esc(PLAN_MODES[p.mode])}</dd><dt>Sustancia</dt><dd>${esc(prod?.substance || '—')}</dd>
+      <dt>Semana actual</dt><dd>${(() => { const sw = substanceWeek(p, t), pz = pausesOf(p).find((x) => t >= x.from && (!x.to || t <= x.to));
+        if (p.start > t) return `Empieza el ${fmtDate(p.start)}`;
+        if (sw?.before) return `Empieza en la semana ${sw.week - sw.sub + 1} del protocolo (ahora: semana ${sw.week})`;
+        if ((end && t > end) || sw?.after) return 'Terminado';
+        return `<strong>${esc(substanceWeekText(sw))}</strong>${pz ? ' · en pausa' : ''}`; })()}</dd>
       <dt>Inicio</dt><dd>${fmtDate(p.start)}</dd><dt>Fin</dt><dd>${end ? fmtDate(end) + (p.end ? '' : ' (calculado por duración)') : 'Sin fecha final registrada'}${shift ? `<br><span class="small">Incluye ${shift} ${shift === 1 ? 'día' : 'días'} de pausa (sin pausas: ${fmtDate(base)})${hasOpenPause(p) ? '. Provisional: supone que reanudas mañana' : ''}.</span>` : ''}</dd>
       <dt>Cantidad del plan</dt><dd>${p.plannedAmount != null ? `${fmtNum(p.plannedAmount, 4)} ${esc(p.plannedUnit)}` : '—'}</dd><dt>Pauta anotada</dt><dd>${esc(p.scheduleNote || '—')}</dd>
       <dt>Fases del protocolo</dt><dd>${p.phases?.length ? p.phases.map((f) => esc(phaseText(f))).join('<br>') : '—'}</dd>

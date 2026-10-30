@@ -374,6 +374,7 @@ with sync_playwright() as p:
     dlg(page).locator('button:has-text("Marcarlas como hechas")').click(); page.wait_for_timeout(1500)
     go(page, '#/'); page.wait_for_timeout(500)
     ok('inicio pasado: Hoy está en la semana 5', 'Semana 5 de 16' in page.inner_text('main'))
+    ok('semana por sustancia en cada toma', 'Semana 5 de 16' in page.locator('.dose', has_text='Creatina').inner_text())
     go(page, '#/protocolos'); page.wait_for_timeout(500)
     row = page.locator('.card', has_text='Cronograma Combinado Femenino').locator('tr', has_text='Creatina')
     ok('alta retroactiva: cumplimiento al 100 %', '100 %' in row.inner_text())
@@ -381,6 +382,7 @@ with sync_playwright() as p:
     page.locator('#pausas li', has_text='viaje').locator('button:has-text("Editar")').click(); page.wait_for_timeout(300)
     dlg(page).locator('[name=from]').fill(iso(today + dt.timedelta(days=3))); dlg(page).locator('button:has-text("Guardar")').click(); page.wait_for_timeout(800)
     ok('editar pausa: el fin se recalcula', 'Incluye 2 días de pausa' in page.inner_text('main dl.kv'))
+    ok('plan: semana actual de la sustancia', 'Semana 5 de 6' in page.inner_text('main dl.kv'))
 
     # aplicar un protocolo con fecha pasada: contar el cumplimiento desde hoy
     go(page, '#/biblioteca'); page.wait_for_timeout(400)

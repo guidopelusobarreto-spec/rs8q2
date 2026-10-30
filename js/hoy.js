@@ -3,7 +3,7 @@ import { esc, $, $$, toast, dialog, fmtDate, field, inp } from './ui.js';
 import { todayISO, planEnd, planBaseEnd, diffDays, addDays, planWeek, pausedOn, pausesOf, notesFor } from './model.js';
 import { pauseText, pauseDialog, resumeDialog } from './pausas.js';
 import { feelChip, feelDialog, guideBox, startDialog, guideContext, guideHTML } from './ajustes.js';
-import { MOMENTS, scheduleText, amountText, adherence, totalWeeks } from './schedule.js';
+import { MOMENTS, scheduleText, amountText, adherence, totalWeeks, substanceWeek, substanceWeekText } from './schedule.js';
 import { fmtDoc, fichaHTML, splitFichas, cleanInline } from './text.js';
 import { productOptions, exceedFlow } from './views1.js';
 import { confirmCompat } from './views3.js';
@@ -89,6 +89,7 @@ export async function hoy(view, r, ctx) {
       <span class="small">${w ? `Semana ${w}${x.total ? ` de ${x.total}` : ''}${stop ? ' · en pausa' : ''}` : `Empieza el ${fmtDate(x.start)}`}</span>
       ${w && x.total ? `<div class="bar"><i style="width:${Math.min(100, Math.round((w / x.total) * 100))}%"></i></div>` : ''}</a>`;
   }).join('')}</div>` : '';
+  const wk = (p) => `<p class="freq wk">${esc(substanceWeekText(substanceWeek(p, date)))}</p>`;
   const freqLine = (ph, sc) => `<p class="freq">${esc(ph.frequency || '—')}${ph.note ? ` · ${esc(ph.note)}` : ''}${sc.overridden || sc.notes.length ? `<br>Se entiende: ${esc(scheduleText(sc))}` : ''}</p>`;
   const card = (s) => {
     const label = L(s.plan), cls = s.status === 'done' ? 'done' : s.status === 'omitted' ? 'omitted' : '';
@@ -97,7 +98,7 @@ export async function hoy(view, r, ctx) {
       : s.status === 'omitted' ? `<span class="chip">Omitido</span><button class="link" data-undo="${s.admin.id}">Deshacer</button>`
       : `<button class="ok" data-do="done" data-k="${esc(s.key)}">Hecho</button><button class="ghost" data-do="later" data-k="${esc(s.key)}">Más tarde</button><button class="ghost" data-do="skip" data-k="${esc(s.key)}">Omitir</button><button class="ghost" data-do="other" data-k="${esc(s.key)}">Otro día o cantidad</button>`;
     return `<div class="dose ${cls}" style="--h:${hueFor(label)}"><div class="top"><span class="name">${esc(label)}</span><span class="amt">${esc(amountText(s.phase) || '—')}</span></div>
-      ${freqLine(s.phase, s.sched)}${when && s.sched.perDay > 1 ? `<p class="freq">${esc(when)}</p>` : ''}${guideBox(notesFor(s.plan, date))}${proto(s.plan)}
+      ${wk(s.plan)}${freqLine(s.phase, s.sched)}${when && s.sched.perDay > 1 ? `<p class="freq">${esc(when)}</p>` : ''}${guideBox(notesFor(s.plan, date))}${proto(s.plan)}
       ${s.status === 'snoozed' ? `<p><span class="chip warn">Pospuesta hasta las ${new Date(s.snoozedUntil).toTimeString().slice(0, 5)}</span></p>` : ''}
       <div class="acts">${acts}</div></div>`;
   };
@@ -105,14 +106,14 @@ export async function hoy(view, r, ctx) {
   const weekly = ag.weekly.map((w, i) => {
     const label = L(w.plan), done = w.count >= w.needed;
     return `<div class="dose ${done ? 'done' : ''}" style="--h:${hueFor(label)}"><div class="top"><span class="name">${esc(label)}</span><span class="amt">${esc(amountText(w.phase) || '—')}</span></div>
-      ${freqLine(w.phase, w.sched)}${guideBox(notesFor(w.plan, date))}${proto(w.plan)}<p class="freq">Esta semana del plan (${fmtDate(w.weekStart)} – ${fmtDate(w.weekEnd)}): <strong>${w.count} de ${w.needed}</strong></p>
+      ${wk(w.plan)}${freqLine(w.phase, w.sched)}${guideBox(notesFor(w.plan, date))}${proto(w.plan)}<p class="freq">Esta semana del plan (${fmtDate(w.weekStart)} – ${fmtDate(w.weekEnd)}): <strong>${w.count} de ${w.needed}</strong></p>
       <div class="acts">${w.today.length ? `<span><span class="chip ok">✓ Hecho hoy a las ${esc(w.today[w.today.length - 1].time)}</span>${otherAmt(w.today[w.today.length - 1], w.phase)}${feelChip(w.today[w.today.length - 1])}</span>${feelBtn(w.today[w.today.length - 1])}<button class="link" data-undo="${w.today[w.today.length - 1].id}">Deshacer</button>`
         : done ? '<span class="chip ok">✓ Completo esta semana</span>' : `<button class="ok" data-do="wdone" data-i="${i}">Hecho hoy</button><button class="ghost" data-do="wother" data-i="${i}">Otro día o cantidad</button>`}</div></div>`;
   }).join('');
   const demand = ag.demand.map((d, i) => {
     const label = L(d.plan), max = d.sched.maxPerWeek;
     return `<div class="dose" style="--h:${hueFor(label)}"><div class="top"><span class="name">${esc(label)}</span><span class="amt">${esc(amountText(d.phase) || '—')}</span></div>
-      ${freqLine(d.phase, d.sched)}${guideBox(notesFor(d.plan, date))}${proto(d.plan)}<p class="freq">Esta semana: <strong>${d.count}</strong>${max ? ` (tu máximo: ${max})` : ''}${d.today.length ? ` · hoy a las ${esc(d.today.map((a) => a.time).join(', '))}` : ''}</p>
+      ${wk(d.plan)}${freqLine(d.phase, d.sched)}${guideBox(notesFor(d.plan, date))}${proto(d.plan)}<p class="freq">Esta semana: <strong>${d.count}</strong>${max ? ` (tu máximo: ${max})` : ''}${d.today.length ? ` · hoy a las ${esc(d.today.map((a) => a.time).join(', '))}` : ''}</p>
       <div class="acts"><button class="sec" data-do="demand" data-i="${i}">Registrar toma</button></div></div>`;
   }).join('');
   const unknown = ag.unknown.map((u) => `<div class="dose" style="--h:${hueFor(L(u.plan))}"><div class="top"><span class="name">${esc(L(u.plan))}</span><span class="amt">${esc(amountText(u.phase))}</span></div>

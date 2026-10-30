@@ -1,6 +1,6 @@
 // Frecuencias: se leen del texto literal de cada fase («1 vez por semana (SC)», «2 veces al día (mañana y noche…)»).
 // La lectura nunca sustituye al texto: se muestra al lado y el usuario puede corregirla por plan (plan.freqOverrides[texto]).
-import { addDays, diffDays, planEnd, planBaseEnd, phaseFor, activeDay, dateOfActiveDay } from './model.js';
+import { addDays, diffDays, planEnd, planBaseEnd, phaseFor, activeDay, dateOfActiveDay, planWeek } from './model.js';
 
 export const MOMENTS = { manana: { label: 'Mañana', at: '09:00' }, mediodia: { label: 'Mediodía', at: '13:00' }, tarde: { label: 'Tarde', at: '17:00' }, noche: { label: 'Noche', at: '21:00' } };
 export const DAY_NAMES = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
@@ -194,3 +194,15 @@ export function totalWeeks(plan) {
   const ph = plan.phases || [];
   return ph.length && ph.every((f) => f.toWeek != null) ? Math.max(...ph.map((f) => f.toWeek)) : null;
 }
+
+// Semana de la sustancia: cuenta desde su primera fase (en un protocolo combinado, una sustancia que empieza en la
+// semana 3 del protocolo está en su semana 1). week = semana del protocolo; las pausas no cuentan.
+export function substanceWeek(plan, date) {
+  const week = planWeek(plan, date);
+  if (!week) return null;
+  const ph = plan.phases || [];
+  const first = ph.length ? Math.min(...ph.map((f) => f.fromWeek)) : 1;
+  const last = ph.length && ph.every((f) => f.toWeek != null) ? Math.max(...ph.map((f) => f.toWeek)) : totalWeeks(plan);
+  return { week, sub: week - first + 1, total: last != null ? last - first + 1 : null, offset: first > 1, before: week < first, after: last != null && week > last };
+}
+export const substanceWeekText = (sw) => (!sw ? '' : `Semana ${sw.sub}${sw.total ? ` de ${sw.total}` : ''}${sw.offset ? ` · semana ${sw.week} del protocolo` : ''}`);
