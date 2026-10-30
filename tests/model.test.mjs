@@ -149,7 +149,7 @@ test('seguimiento continuo: revisión periódica y sin parada automática', asyn
   al = await m.alerts(p.id);
   assert.ok(!al.some((a) => /vencida/.test(a.text)));
   const cal = await m.calendar(p.id, '2026-09-01', '2026-12-31');
-  assert.deepEqual(cal.filter((c) => c.text === 'Revisión periódica').map((c) => c.date), ['2026-10-01', '2026-10-31', '2026-11-30', '2026-12-30']);
+  assert.deepEqual(cal.filter((c) => c.text.startsWith('Revisión periódica')).map((c) => c.date), ['2026-10-01', '2026-10-31', '2026-11-30', '2026-12-30']);
 });
 
 test('PCT: conserva el calendario introducido y no inventa plan', async () => {

@@ -95,6 +95,9 @@ export function notesFor(plan, date) {
   const pz = pausedOn(plan, date), w = planWeek(plan, date);
   return list.filter((n) => n.scope === 'always' || (n.scope === 'pause' ? !!pz : n.scope === 'weeks' && !pz && w >= n.fromWeek && w <= (n.toWeek ?? Infinity)));
 }
+// Grupo de un plan: el protocolo aplicado junto (mismo nombre de biblioteca y misma fecha de inicio) o el plan suelto.
+export const groupKey = (p) => (libraryName(p) ? `${libraryName(p)}|${p.start}` : p.id);
+export const groupName = (p) => libraryName(p) || p.name || PLAN_MODES[p.mode] || 'plan';
 export function runSiblings(plans, plan) {
   const lib = libraryName(plan);
   if (!lib) return [plan];
@@ -545,15 +548,20 @@ export class Model {
     const t = this.today();
     const out = [];
     const push = (level, text, ref) => out.push({ level, text, ref, profileId });
+    // Avisos de plan: uno por protocolo aplicado junto (no uno por sustancia) y nunca de planes cerrados.
+    const seen = new Set();
+    const pushOnce = (p, level, text) => { const k = `${groupKey(p)}|${text}`; if (!seen.has(k)) { seen.add(k); push(level, text, p.id); } };
     for (const p of await this.list('plans', profileId)) {
       const end = planEnd(p);
-      if (p.mode === 'pendiente') push('aviso', `Plan «${p.name || 'sin nombre'}»: duración pendiente de confirmar`, p.id);
-      if (end && !p.closed) {
+      if (p.closed) continue;
+      const nm = groupName(p);
+      if (p.mode === 'pendiente') pushOnce(p, 'aviso', `«${nm}»: duración pendiente de confirmar (sin fecha final)`);
+      if (end) {
         const left = diffDays(t, end);
-        if (p.alerts.d7 && left === 7) push('aviso', `${END_ALERT_TEXT} (faltan 7 días: ${end})`, p.id);
-        if (p.alerts.d2 && left === 2) push('aviso', `${END_ALERT_TEXT} (faltan 2 días: ${end})`, p.id);
-        if (p.alerts.d0 && left === 0) push('aviso', `${END_ALERT_TEXT} (termina hoy)`, p.id);
-        if (p.alerts.overdue && left < 0) push('seguridad', `Fecha final vencida el ${end} en «${p.name || 'plan'}». Revisa el plan.`, p.id);
+        if (p.alerts.d7 && left === 7) pushOnce(p, 'aviso', `${END_ALERT_TEXT} «${nm}» (faltan 7 días: ${end})`);
+        if (p.alerts.d2 && left === 2) pushOnce(p, 'aviso', `${END_ALERT_TEXT} «${nm}» (faltan 2 días: ${end})`);
+        if (p.alerts.d0 && left === 0) pushOnce(p, 'aviso', `${END_ALERT_TEXT} «${nm}» (termina hoy)`);
+        if (p.alerts.overdue && left < 0) pushOnce(p, 'seguridad', `Fecha final vencida el ${end} en «${nm}». Revisa el plan.`);
       }
       // Revisión periódica en cualquier plan; los días en pausa no cuentan.
       if (p.reviewEveryDays > 0 && !p.closed && p.start <= t && (!end || t <= end)) {
@@ -561,10 +569,10 @@ export class Model {
         const next = dateOfActiveDay(p, (n + 1) * p.reviewEveryDays);
         const last = n > 0 ? dateOfActiveDay(p, n * p.reviewEveryDays) : null;
         const done = (p.reviewsDone || []).includes(last);
-        if (last && !done) push('aviso', `Revisión periódica vencida (${last}) en «${p.name || 'seguimiento continuo'}»`, p.id);
-        else if (diffDays(t, next) <= 2) push('info', `Próxima revisión periódica: ${next}`, p.id);
+        if (last && !done) pushOnce(p, 'aviso', `Revisión periódica vencida (${last}) en «${nm}»`);
+        else if (diffDays(t, next) <= 2) pushOnce(p, 'info', `Próxima revisión periódica de «${nm}»: ${next}`);
       }
-      for (const d of REVIEW_DAYS) if (dateOfActiveDay(p, d) === t) push('info', `Revisión de ${d} días disponible para «${p.name || 'plan'}»`, p.id);
+      for (const d of REVIEW_DAYS) if (dateOfActiveDay(p, d) === t) pushOnce(p, 'info', `Revisión de ${d} días disponible para «${nm}»`);
     }
     for (const a of await this.list('administrations', profileId)) {
       if (a.status === 'pendiente' && a.date <= t) push('aviso', `Registro pendiente de confirmar: ${a.date} ${a.time}`, a.id);
@@ -591,16 +599,21 @@ export class Model {
     const name = async (id) => (await this.product(id))?.substance || '';
     for (const r of await this.list('reminders', profileId)) for (const o of occurrences(r, from, to)) add(o.date, 'recordatorio', r.label, r.id, o.time);
     for (const a of await this.list('administrations', profileId)) add(a.date, 'registro', `${await name(a.productId)} — ${ADMIN_STATUS[a.status]}${a.amount != null ? ` (${a.amount} ${a.unit})` : ''}${a.forDate ? ` · cuenta como la prevista del ${esD(a.forDate)}` : ''}`, a.id, a.time);
+    // Un protocolo aplicado junto lleva una sola marca de inicio, fin, pausa y revisión (no una por sustancia).
+    // Los planes cerrados conservan su inicio y su fin como historia, pero ya no generan revisiones.
+    const seen = new Set();
+    const once = (p, date, type, text) => { const k = `${groupKey(p)}|${date}|${type}|${text}`; if (!seen.has(k)) { seen.add(k); add(date, type, text, p.id); } };
     for (const p of await this.list('plans', profileId)) {
-      const end = planEnd(p);
-      add(p.start, p.mode === 'descanso' ? 'descanso' : 'ciclo', `Inicio: ${p.name || PLAN_MODES[p.mode]}`, p.id);
-      if (end) add(end, p.mode === 'descanso' ? 'descanso' : 'ciclo', `Fin: ${p.name || PLAN_MODES[p.mode]}`, p.id);
+      const end = planEnd(p), nm = groupName(p) + (p.closed ? ' (cerrado)' : ''), kind = p.mode === 'descanso' ? 'descanso' : 'ciclo';
+      once(p, p.start, kind, `Inicio: ${nm}`);
+      if (end) once(p, end, kind, `Fin: ${nm}`);
+      if (p.closed) continue;
       for (const x of pausesOf(p)) {
-        add(x.from, 'descanso', `Pausa: ${p.name || PLAN_MODES[p.mode]}`, p.id);
-        if (x.to) add(addDays(x.to, 1), 'ciclo', `Reanuda: ${p.name || PLAN_MODES[p.mode]}`, p.id);
+        once(p, x.from, 'descanso', `Pausa: ${nm}`);
+        if (x.to) once(p, addDays(x.to, 1), 'ciclo', `Reanuda: ${nm}`);
       }
-      for (const d of REVIEW_DAYS) add(dateOfActiveDay(p, d), 'revision', `Revisión ${d} días`, p.id);
-      if (p.reviewEveryDays > 0) for (let k = 1, x; (x = dateOfActiveDay(p, k * p.reviewEveryDays)) <= to && (!end || x <= end); k++) add(x, 'revision', 'Revisión periódica', p.id);
+      for (const d of REVIEW_DAYS) once(p, dateOfActiveDay(p, d), 'revision', `Revisión ${d} días · ${nm}`);
+      if (p.reviewEveryDays > 0) for (let k = 1, x; (x = dateOfActiveDay(p, k * p.reviewEveryDays)) <= to && (!end || x <= end); k++) once(p, x, 'revision', `Revisión periódica · ${nm}`);
     }
     for (const x of await this.list('pct', profileId)) {
       if (x.reviewDate) add(x.reviewDate, 'pct', 'Revisión postciclo', x.id);

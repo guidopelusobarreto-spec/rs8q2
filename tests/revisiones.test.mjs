@@ -85,3 +85,17 @@ test('cambiar de protocolo: misma fecha de inicio, tomas y pausas pasan al plan 
   assert.equal(!!(await m.store.get('plans', d3.id)).closed, false, 'lo que no marcas sigue abierto');
   assert.match((await m.store.get('plans', sarm.id)).notes, /Sustituido por «Lipólisis»/);
 });
+
+test('calendario y avisos: una marca por protocolo, nada de los planes cerrados', async () => {
+  const { m, a } = await mk('2026-09-25T10:00:00');
+  const mkp = (productId, extra = {}) => m.addPlan(a.id, { mode: 'pendiente', start: '2026-09-18', productId, phases: [ph(1, null, 1)], source: 'Biblioteca: Lipólisis', ...extra });
+  await mkp('reta15'); await mkp('crea500'); await mkp('whey');
+  await mkp('rad10', { source: 'Biblioteca: Viejo', closed: false }).then((p) => m.closePlan(a.id, p.id));
+  const cal = await m.calendar(a.id, '2026-09-18', '2026-09-30');
+  assert.equal(cal.filter((x) => x.date === '2026-09-25' && x.type === 'revision').length, 1, 'una sola revisión de 7 días');
+  assert.equal(cal.filter((x) => x.date === '2026-09-18' && /^Inicio: Lipólisis$/.test(x.text)).length, 1);
+  assert.ok(cal.some((x) => /^Inicio: Viejo \(cerrado\)$/.test(x.text)), 'el cerrado conserva su inicio como historia');
+  const al = await m.alerts(a.id);
+  assert.equal(al.filter((x) => /Revisión de 7 días/.test(x.text)).length, 1);
+  assert.equal(al.filter((x) => /pendiente de confirmar/.test(x.text)).length, 1);
+});
