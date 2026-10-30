@@ -214,3 +214,13 @@ li.cmp-compatible { border-left: .35rem solid var(--ok); padding-left: .6rem; }
   body { background: #fff; color: #000; } main { padding: 0; } .card, .box { border: 1px solid #999; break-inside: avoid; }
 }
 [hidden] { display: none !important; }
+
+/* Notas del usuario (guía), cómo sienta, opciones apiladas */
+.guide { margin: .45rem 0 0; padding: .45rem .6rem; border-left: .25rem solid var(--info); background: var(--info-bg); border-radius: .45rem; font-size: .85rem; }
+.guide p { margin: 0; } .guide p + p { margin-top: .3rem; }
+.stack { display: flex; flex-direction: column; gap: .5rem; } .stack .small { margin: -.2rem 0 .2rem; }
+.row.feel { gap: .2rem .8rem; }
+table.feel-table { border-collapse: collapse; width: 100%; font-size: .9rem; }
+table.feel-table th, table.feel-table td { border-bottom: 1px solid var(--line); padding: .35rem .4rem; text-align: right; }
+table.feel-table th:first-child { text-align: left; white-space: nowrap; }
+table.feel-table tr.notes td { text-align: left; color: var(--muted); font-size: .8rem; }

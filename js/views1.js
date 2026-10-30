@@ -7,6 +7,7 @@ import { fichaHTML, splitFichas, cleanInline } from './text.js';
 import { safetyFor, EMERGENCY, SEVERE_SYMPTOMS, SEVERE_SOURCE, CONSULTED } from './safety.js';
 import { refreshProfiles } from './app.js';
 import { pauseText } from './pausas.js';
+import { feelSelect, feelChip } from './ajustes.js';
 
 const UNITS = ['mg', 'mcg', 'UI', 'ml', 'unidad', 'tableta', 'cápsula', 'aplicación', 'gotas'];
 const nowTime = () => new Date().toTimeString().slice(0, 5);
@@ -78,6 +79,7 @@ export async function registro(view, r, ctx) {
         ${field('Nº de lote (texto libre)', inp('lotText'))}
         ${field('Unidades del envase consumidas (inventario)', inp('unitsUsed', '', 'type="number" step="any" min="0"'))}
       </div>
+      ${feelSelect()}
       ${field('Síntomas posteriores', '<textarea name="symptoms"></textarea>')}
       ${field('Efectos adversos declarados', '<textarea name="adverse"></textarea>')}
       ${field('Observaciones', '<textarea name="notes"></textarea>')}
@@ -119,6 +121,15 @@ export async function registro(view, r, ctx) {
 
 // Flujo de cantidad superior al plan: alerta, preguntas e incidencia en registro aparte.
 export async function exceedFlow(ctx, admin, check) {
+  // Primero: ¿ajuste intencionado? Si lo es, se guarda marcado y sin incidencia. Si no (o no se contesta), sigue la ventana de seguridad.
+  const intent = await dialog(`<form><h2>Por encima de tu plan</h2>
+    <p>Registrado: <strong>${fmtNum(check.registered, 4)} ${esc(check.unit)}</strong> · Tu plan: <strong>${fmtNum(check.reference, 4)} ${esc(check.unit)}</strong>.</p>
+    <p>¿Ha sido un ajuste tuyo?</p><input type="hidden" name="v">
+    <div class="row"><button type="button" class="ok" data-v="si">Sí, ajuste mío</button><button type="button" class="sec" data-v="no">No, ha sido un error</button></div>
+    <p class="small muted">Si es un ajuste que vas a mantener, puedes cambiar la cantidad de la fase en el plan («Cambiar cantidad»).</p></form>`, {
+    onOpen: (dl) => dl.querySelectorAll('[data-v]').forEach((b) => b.addEventListener('click', () => { dl.querySelector('[name=v]').value = b.dataset.v; dl.querySelector('form').requestSubmit(); })),
+  });
+  if (intent?.v === 'si') { await ctx.model.updateAdministration(ctx.profileId, admin.id, { aboveIntent: true }); toast('Guardado como ajuste tuyo'); return; }
   const res = await dialog(`<form><h2>${esc(EXCEED_TEXT)}</h2>
     <div class="alert seguridad">Registrado: <strong>${fmtNum(check.registered, 4)} ${esc(check.unit)}</strong> · Plan: <strong>${fmtNum(check.reference, 4)} ${esc(check.unit)}</strong> (sin conversiones).</div>
     <p>La app <strong>no puede determinar la gravedad clínica</strong> solo con la cantidad: puede haber un error de unidad o de plan. Se guardará como «Cantidad superior al plan registrado» hasta que se revise.</p>
@@ -155,7 +166,7 @@ export async function historial(view, r, ctx) {
     <div class="card"><p class="muted small">${rows.length} registros</p>
     ${rows.length ? `<ul class="plain">${rows.map((a) => { const p = pname(a.productId); return `<li>
       <strong>${fmtDate(a.date)} ${a.time}</strong> — ${esc(p?.substance || a.productId)} ${ruoBadge(p)}<br>
-      ${ADMIN_STATUS[a.status]} · Cantidad: ${a.amount != null ? `${fmtNum(a.amount, 4)} ${esc(a.unit)}` : '—'}${a.route ? ' · ' + esc(a.route) : ''}${a.lotText ? ' · lote ' + esc(a.lotText) : ''}
+      ${ADMIN_STATUS[a.status]} · Cantidad: ${a.amount != null ? `${fmtNum(a.amount, 4)} ${esc(a.unit)}` : '—'}${a.route ? ' · ' + esc(a.route) : ''}${a.lotText ? ' · lote ' + esc(a.lotText) : ''}${feelChip(a)}${a.aboveIntent ? ' <span class="chip">Por encima del plan, ajuste tuyo</span>' : ''}
       ${a.symptoms ? `<br><span class="small">Síntomas: ${esc(a.symptoms)}</span>` : ''}${a.adverse ? `<br><span class="small">Efectos adversos: ${esc(a.adverse)}</span>` : ''}
       ${a.history?.length ? `<br><span class="small muted">Modificado ${a.history.length} vez/veces</span>` : ''}
       <div class="row noprint" style="margin-top:.3rem"><button class="sec" data-edit="${a.id}">Confirmar / corregir</button></div></li>`; }).join('')}</ul>` : '<p class="muted">Sin registros con estos filtros.</p>'}</div>`;
@@ -167,6 +178,7 @@ export async function historial(view, r, ctx) {
       ${field('Estado', `<select name="status">${Object.entries(ADMIN_STATUS).map(([k, v]) => opt(k, v, a.status)).join('')}</select>`)}
       <div class="grid">${field('Fecha', inp('date', a.date, 'type="date"'))}${field('Hora', inp('time', a.time, 'type="time"'))}
       ${field('Cantidad', inp('amount', a.amount ?? '', 'type="number" step="any" min="0"'))}${field('Unidad', inp('unit', a.unit, 'list="units"'))}</div>
+      ${feelSelect(a.feel)}
       ${field('Síntomas posteriores', `<textarea name="symptoms">${esc(a.symptoms)}</textarea>`)}
       ${field('Efectos adversos', `<textarea name="adverse">${esc(a.adverse)}</textarea>`)}
       ${field('Observaciones', `<textarea name="notes">${esc(a.notes)}</textarea>`)}

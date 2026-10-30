@@ -67,3 +67,19 @@ export async function removePauseDialog(ctx, targets, pause, labelOf = (p) => p.
   if (ok) report(list.length, failed, labelOf, (n) => (n > 1 ? `Pausa borrada en ${n} sustancias` : 'Pausa borrada'));
   return !!ok;
 }
+
+// Editar fechas y nota de una pausa (en todos los planes que la comparten).
+export async function editPauseDialog(ctx, targets, pause, labelOf = (p) => p.name || 'plan') {
+  const same = (p) => pausesOf(p).find((x) => x.from === pause.from && x.to === pause.to);
+  const list = targets.filter(same);
+  let failed = [];
+  const ok = await dialog(`<form><h2>Editar la pausa</h2>
+    <div class="grid">${field('Desde', inp('from', pause.from, 'type="date" required'), true)}${field('Hasta (incluido; vacío = sin fecha de vuelta)', inp('to', pause.to || '', 'type="date"'))}</div>
+    ${field('Nota (opcional)', inp('note', pause.note || '', 'maxlength="200"'))}
+    ${list.length > 1 ? `<p class="small">Se cambia en: ${names(list, labelOf)}.</p>` : ''}
+    <div class="row"><button>Guardar</button><button type="button" class="ghost" data-close>Cancelar</button></div></form>`, {
+    onSubmit: async (d) => { failed = await each(list, (p) => ctx.model.updatePause(ctx.profileId, p.id, same(p).id, d)); return true; },
+  });
+  if (ok) report(list.length, failed, labelOf, (n) => (n > 1 ? `Pausa cambiada en ${n} sustancias` : 'Pausa cambiada'));
+  return !!ok;
+}

@@ -6,6 +6,7 @@ import { cleanInline } from './text.js';
 import { hueFor } from './hoy.js';
 import { productOptions, ruoBadge } from './views1.js';
 import { saveUI, refreshProfiles } from './app.js';
+import { backfillDialog } from './ajustes.js';
 
 const SEX = { hombre: 'Hombres', mujer: 'Mujeres', ambos: 'Hombres y mujeres' };
 const unitTxt = (t) => (t.durationUnit === 'dias' ? 'días' : 'semanas');
@@ -78,7 +79,9 @@ async function applyDialog(ctx, t, products, profiles) {
   catch (e) { toast('No se aplicó: ' + e.message); return; }
   if (plans) {
     if (plans[0].profileId !== ctx.profileId) { ctx.profileId = plans[0].profileId; await saveUI({ profileId: ctx.profileId }); await refreshProfiles(); }
-    toast(`${plans.length} plan(es) creados`); location.hash = plans.length === 1 ? '#/plan/' + plans[0].id : '#/planes'; }
+    toast(`${plans.length} plan(es) creados`);
+    if (data.start < todayISO()) await backfillDialog(ctx, plans);
+    location.hash = plans.length === 1 ? '#/plan/' + plans[0].id : '#/planes'; }
 }
 
 // Aviso de combinación según la matriz del usuario. Devuelve true si decide continuar.

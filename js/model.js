@@ -1,7 +1,7 @@
 // Lógica de la app, independiente de la interfaz. Todo registro lleva profileId y se filtra por él.
 import { CATALOG, RUO_LABEL } from './catalog.js';
 import { COLLECTIONS } from './store.js';
-import { buildAgenda, amountText } from './schedule.js';
+import { buildAgenda, amountText, missingDoses } from './schedule.js';
 
 export const ADMIN_STATUS = { realizado: 'Realizado', omitido: 'Omitido', retrasado: 'Retrasado', cancelado: 'Cancelado', pendiente: 'Pendiente de confirmar' };
 export const PLAN_MODES = {
@@ -14,6 +14,8 @@ export const END_ALERT_TEXT = 'Se acerca la fecha final del periodo registrado. 
 export const EXCEED_TEXT = 'La cantidad registrada supera la cantidad del plan';
 export const EXCEED_LABEL = 'Cantidad superior al plan registrado';
 export const REVIEW_DAYS = [7, 14, 21, 28];
+// Cómo le sentó la toma a la persona (lo marca ella; la app no interpreta nada).
+export const FEEL = { bien: 'Me sienta bien', regular: 'Regular', efectos: 'Efectos secundarios' };
 
 // ── utilidades de fecha (YYYY-MM-DD, sin husos horarios) ──
 const pad = (n) => String(n).padStart(2, '0');
@@ -86,6 +88,13 @@ export const planWeek = (p, date) => (p.start && date >= p.start ? Math.floor(ac
 export const hasOpenPause = (p) => pausesOf(p).some((x) => !x.to);
 // Planes aplicados juntos desde la Biblioteca (mismo protocolo y misma fecha de inicio). Un plan suelto solo se tiene a sí mismo.
 export const libraryName = (p) => (p?.source || '').match(/^Biblioteca: (.+?)(?: · |$)/)?.[1] || '';
+// Notas-guía: las escribe el usuario y la app solo las muestra. scope: 'always' | 'weeks' (fromWeek–toWeek; null = hasta el final) | 'pause'.
+export function notesFor(plan, date) {
+  const list = Array.isArray(plan?.guideNotes) ? plan.guideNotes : [];
+  if (!list.length || !plan.start || date < plan.start) return [];
+  const pz = pausedOn(plan, date), w = planWeek(plan, date);
+  return list.filter((n) => n.scope === 'always' || (n.scope === 'pause' ? !!pz : n.scope === 'weeks' && !pz && w >= n.fromWeek && w <= (n.toWeek ?? Infinity)));
+}
 export function runSiblings(plans, plan) {
   const lib = libraryName(plan);
   if (!lib) return [plan];
@@ -315,6 +324,94 @@ export class Model {
     return this.updatePlan(profileId, planId, { pauses: pausesOf(p).filter((z) => z.id !== pauseId) });
   }
 
+  async _plan(profileId, planId) {
+    const p = await this.store.get('plans', planId);
+    must(p && p.profileId === profileId, 'Plan inexistente o de otro perfil');
+    return p;
+  }
+  async updatePause(profileId, planId, pauseId, { from, to = '', note = '' }) {
+    const p = await this._plan(profileId, planId);
+    must(isDate(from), 'Indica desde qué día');
+    must(from >= p.start, `La pausa no puede empezar antes del inicio del plan (${esD(p.start)})`);
+    if (to) { must(isDate(to), 'Fecha «hasta» no válida'); must(to >= from, 'La pausa termina antes de empezar'); }
+    const list = pausesOf(p);
+    must(list.some((x) => x.id === pauseId), 'Pausa inexistente');
+    must(!list.some((x) => x.id !== pauseId && overlaps(from, to, x.from, x.to)), 'Se solapa con otra pausa de este plan');
+    const pauses = list.map((x) => (x.id === pauseId ? { ...x, from, to: to || '', note: note || '' } : x)).sort((a, b) => a.from.localeCompare(b.from));
+    return this.updatePlan(profileId, planId, { pauses });
+  }
+  // Notas-guía: crear o actualizar (por id) y borrar.
+  async saveGuideNote(profileId, planId, n) {
+    const p = await this._plan(profileId, planId);
+    const text = String(n.text || '').trim();
+    must(text, 'Escribe la nota');
+    must(['always', 'weeks', 'pause'].includes(n.scope), 'Elige cuándo se muestra');
+    let fromWeek = null, toWeek = null;
+    if (n.scope === 'weeks') {
+      fromWeek = Number(n.fromWeek); toWeek = n.toWeek === '' || n.toWeek == null ? null : Number(n.toWeek);
+      must(Number.isInteger(fromWeek) && fromWeek >= 1, 'Semana inicial no válida');
+      if (toWeek != null) must(Number.isInteger(toWeek) && toWeek >= fromWeek, 'La semana final es anterior a la inicial');
+    }
+    const rec = { id: n.id || uid(), scope: n.scope, fromWeek, toWeek, text };
+    const old = Array.isArray(p.guideNotes) ? p.guideNotes : [];
+    const guideNotes = old.some((x) => x.id === rec.id) ? old.map((x) => (x.id === rec.id ? rec : x)) : [...old, rec];
+    return this.updatePlan(profileId, planId, { guideNotes });
+  }
+  async removeGuideNote(profileId, planId, id) {
+    const p = await this._plan(profileId, planId);
+    return this.updatePlan(profileId, planId, { guideNotes: (p.guideNotes || []).filter((x) => x.id !== id) });
+  }
+  // Cambia la cantidad de la fase que cubre la semana W, desde W hasta el final de esa fase. Lo anterior queda igual.
+  async adjustPhase(profileId, planId, { fromWeek, amount, amountMax = '' }) {
+    const p = await this._plan(profileId, planId);
+    const w = Number(fromWeek), a = num(amount), mx = num(amountMax);
+    must(Number.isInteger(w) && w >= 1, 'Semana no válida');
+    must(a != null && !Number.isNaN(a) && a >= 0, 'Cantidad no válida');
+    if (mx != null) must(!Number.isNaN(mx) && mx >= a, 'El máximo es menor que la cantidad');
+    const phases = [...(p.phases || [])].sort((x, y) => x.fromWeek - y.fromWeek);
+    const i = phases.findIndex((f) => w >= f.fromWeek && w <= (f.toWeek ?? Infinity));
+    must(i >= 0, `Ninguna fase de este plan cubre la semana ${w}`);
+    const f = phases[i];
+    const was = `${f.amount ?? '—'}${f.amountMax != null ? '–' + f.amountMax : ''} ${f.unit || ''}`.trim();
+    const note = /Ajustado por ti/.test(f.note || '') ? f.note : [f.note, `Ajustado por ti (antes ${was})`].filter(Boolean).join(' · ');
+    const nf = { ...f, fromWeek: w, amount: a, amountMax: mx, note };
+    phases.splice(i, 1, ...(w === f.fromWeek ? [nf] : [{ ...f, toWeek: w - 1 }, nf]));
+    return this.updatePlan(profileId, planId, { phases });
+  }
+  // Fecha de inicio de uno o varios planes (un protocolo aplicado junto se mueve entero).
+  async setStart(profileId, planIds, start) {
+    must(isDate(start), 'Fecha de inicio no válida');
+    const ps = [];
+    for (const id of planIds) { const p = await this._plan(profileId, id); if (p.end) must(p.end >= start, `«${p.name || 'plan'}»: la fecha final (${esD(p.end)}) es anterior al nuevo inicio`); ps.push(p); }
+    const out = [];
+    for (const p of ps) out.push(await this.updatePlan(profileId, p.id, { start }));
+    return out;
+  }
+  // Cumplimiento y «sin registro» solo desde esta fecha (para ciclos dados de alta tarde). Vacío = desde el inicio.
+  async setTrackFrom(profileId, planIds, date) {
+    if (date) must(isDate(date), 'Fecha no válida');
+    const out = [];
+    for (const id of planIds) { await this._plan(profileId, id); out.push(await this.updatePlan(profileId, id, { trackFrom: date || '' })); }
+    return out;
+  }
+  // Alta retroactiva: registra como hechas las tomas previstas que faltan hasta «until», con la cantidad de cada fase.
+  async backfill(profileId, planIds, until = addDays(this.today(), -1)) {
+    const admins = await this.list('administrations', profileId);
+    let added = 0; const skipped = [];
+    for (const id of planIds) {
+      const p = await this._plan(profileId, id);
+      const miss = missingDoses(p, admins, until);
+      if (!miss.length) continue;
+      if (!p.productId) { skipped.push(p.name || 'plan'); continue; }
+      for (const x of miss) {
+        await this.addAdministration(profileId, { productId: p.productId, planId: p.id, date: x.date, time: x.time, amount: x.amount ?? '', unit: x.unit, status: 'realizado',
+          source: 'Alta retroactiva', notes: x.amount == null ? 'Alta retroactiva: cantidad sin indicar (la fase tiene un rango)' : 'Alta retroactiva: revisa la cantidad si tomaste otra' });
+        added++;
+      }
+    }
+    return { added, skipped };
+  }
+
   async markReviewDone(profileId, planId, date) {
     const p = await this.store.get('plans', planId);
     must(p && p.profileId === profileId, 'Plan inexistente o de otro perfil');
@@ -335,7 +432,8 @@ export class Model {
     if (d.lotId) { const lot = await this.store.get('lots', d.lotId); must(lot && lot.profileId === profileId, 'El lote pertenece a otro perfil'); }
     const rec = await this._add('administrations', profileId, { productId: d.productId, planId: d.planId || '', date: d.date, time: d.time,
       amount: num(d.amount), unit: d.unit || '', route: d.route || '', lotId: d.lotId || '', lotText: d.lotText || '', unitsUsed: num(d.unitsUsed),
-      notes: d.notes || '', symptoms: d.symptoms || '', adverse: d.adverse || '', status, weightKg: num(d.weightKg), source: d.source || '' });
+      notes: d.notes || '', symptoms: d.symptoms || '', adverse: d.adverse || '', status, weightKg: num(d.weightKg), source: d.source || '',
+      feel: FEEL[d.feel] ? d.feel : '', aboveIntent: !!d.aboveIntent });
     if (rec.weightKg) await this.addWeight(profileId, { date: d.date, kg: rec.weightKg, note: 'Anotado con un registro' });
     return { admin: rec, check: this.checkAdministration(rec, plan) };
   }
@@ -477,11 +575,11 @@ export class Model {
     const labels = await this.planLabels(plans), label = async (pl) => labels.get(pl.id);
     for (let d = from; d <= to; d = addDays(d, 1)) {
       const ag = buildAgenda({ plans, admins, date: d });
-      for (const s of ag.slots) if (s.status !== 'done' && s.status !== 'omitted') add(d, d >= t ? 'prevista' : 'sinregistro', `${await label(s.plan)} ${amountText(s.phase)}`.trim(), s.plan.id, s.time);
+      for (const s of ag.slots) if (s.status !== 'done' && s.status !== 'omitted' && (d >= t || !(s.plan.trackFrom > d))) add(d, d >= t ? 'prevista' : 'sinregistro', `${await label(s.plan)} ${amountText(s.phase)}`.trim(), s.plan.id, s.time);
       for (const w of ag.weekly) {
         if (w.count >= w.needed) continue;
         if (d === w.weekStart && w.weekEnd >= t) add(d, 'prevista', `${await label(w.plan)} ${amountText(w.phase)} · ${w.needed} esta semana (${w.count} hechas)`, w.plan.id);
-        if (d === w.weekEnd && d < t) add(d, 'sinregistro', `${await label(w.plan)}: ${w.count} de ${w.needed} esa semana`, w.plan.id);
+        if (d === w.weekEnd && d < t && !(w.plan.trackFrom > d)) add(d, 'sinregistro', `${await label(w.plan)}: ${w.count} de ${w.needed} esa semana`, w.plan.id);
       }
     }
     for (const w of await this.list('weights', profileId)) add(w.date, 'peso', `${w.kg} kg`, w.id);

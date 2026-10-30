@@ -1,7 +1,8 @@
 // Calendario, ciclos, postciclo, recordatorios, peso, hábitos, informes, incidencias y ajustes.
 import { esc, $, $$, opt, field, inp, toast, dialog, fmtDate, fmtNum, readForm, showErr, download, lineChart } from './ui.js';
 import { parseImportText, importPlans, parsePhaseLine, phaseText, PLAN_MODES, PCT_STATUS, PCT_UNDEFINED, REVIEW_DAYS, ADMIN_STATUS, planEnd, planBaseEnd, pausesOf, hasOpenPause, runSiblings, addDays, diffDays, todayISO, weightChange, toISODate } from './model.js';
-import { pauseText, pauseDialog, resumeDialog, removePauseDialog } from './pausas.js';
+import { pauseText, pauseDialog, resumeDialog, removePauseDialog, editPauseDialog } from './pausas.js';
+import { notesList, noteDialog, feelTable, adjustDialog, startDialog, backfillDialog } from './ajustes.js';
 import { COLLECTIONS } from './store.js';
 import { WHO_ACTIVITY, EMERGENCY } from './safety.js';
 import { productOptions, alertBox, dehydration, DEHYDRATION_TEXT, ruoBadge } from './views1.js';
@@ -115,7 +116,7 @@ export async function planDetalle(view, r, ctx) {
   const pausesCard = `<div class="card" id="pausas"><h2 style="margin-top:0">Pausas</h2>
     <p class="small muted">Los días en pausa no cuentan: las fases siguientes y el fin se retrasan esos días.${sibs.length > 1 ? ` Se aplican a todo el protocolo (${sibs.length} sustancias aplicadas juntas).` : ''}</p>
     ${pauses.length ? `<ul class="plain">${pauses.map((x) => `<li><strong>${esc(pauseText(x))}</strong>${x.note ? `<br><span class="small">${esc(x.note)}</span>` : ''}
-      <div class="row noprint" style="margin-top:.3rem">${x.to ? '' : `<button class="ok slim" data-resume="${x.id}">Reanudar</button>`}<button class="ghost slim" data-unpause="${x.id}">Borrar</button></div></li>`).join('')}</ul>` : '<p class="muted">Sin pausas.</p>'}
+      <div class="row noprint" style="margin-top:.3rem">${x.to ? '' : `<button class="ok slim" data-resume="${x.id}">Reanudar</button>`}<button class="sec slim" data-pedit="${x.id}">Editar</button><button class="ghost slim" data-unpause="${x.id}">Borrar</button></div></li>`).join('')}</ul>` : '<p class="muted">Sin pausas.</p>'}
     ${p.closed || hasOpenPause(p) ? '' : `<div class="row noprint"><button id="pause" class="sec">${sibs.length > 1 ? 'Pausar el protocolo' : 'Pausar'}</button></div>`}</div>`;
   const nextReview = p.reviewEveryDays > 0 ? addDays(p.start, (Math.floor(diffDays(p.start, t) / p.reviewEveryDays) + 1) * p.reviewEveryDays) : null;
   const lastReview = p.reviewEveryDays > 0 && diffDays(p.start, t) >= p.reviewEveryDays ? addDays(p.start, Math.floor(diffDays(p.start, t) / p.reviewEveryDays) * p.reviewEveryDays) : null;
@@ -130,13 +131,18 @@ export async function planDetalle(view, r, ctx) {
       <dt>Revisión periódica</dt><dd>${p.reviewEveryDays ? `cada ${p.reviewEveryDays} días · próxima ${fmtDate(nextReview)}` : '—'}</dd>
       <dt>Fuente</dt><dd>${esc(p.source || '—')}</dd><dt>Introducido por</dt><dd>${esc(p.enteredBy || '—')}</dd><dt>Registrado</dt><dd>${new Date(p.createdAt).toLocaleString('es-ES')}</dd></dl>
       <div class="row noprint" style="margin-top:.6rem"><button id="edit" class="sec">Editar</button>${lastReview ? `<button id="rev" class="sec">Marcar revisión del ${fmtDate(lastReview)} como hecha</button>` : ''}<button id="close" class="sec">${p.closed ? 'Reabrir' : 'Cerrar plan'}</button>
-      <a class="btn sec" href="#/pct?ciclo=${p.id}">Seguimiento postciclo</a></div>
+      <a class="btn sec" href="#/pct?ciclo=${p.id}">Seguimiento postciclo</a>
+      <button id="startBtn" class="sec">Fecha de inicio${sibs.length > 1 ? ' del protocolo' : ''}</button>${p.start < t ? '<button id="backBtn" class="sec">Días anteriores</button>' : ''}</div>
+      ${p.trackFrom ? `<p class="small">El cumplimiento cuenta desde el ${fmtDate(p.trackFrom)}.</p>` : ''}
       ${p.history?.length ? `<details><summary>Historial de modificaciones (${p.history.length})</summary><ul class="small">${p.history.map((h) => `<li>${new Date(h.at).toLocaleString('es-ES')}: ${h.changes.map((c) => esc(c.field)).join(', ')}</li>`).join('')}</ul></details>` : ''}</div>
     ${pausesCard}
+    <div class="card" id="notas"><h2 style="margin-top:0">Tus notas (guía)</h2><p class="small muted">Las escribes tú; salen en Hoy cuando toca (siempre, en unas semanas o durante una pausa).</p>
+      ${p.guideNotes?.length ? `<ul class="plain">${notesList(p)}</ul>` : '<p class="muted">Sin notas.</p>'}<div class="row noprint"><button id="addNote" class="sec">Añadir nota</button></div></div>
+    <div class="card" id="sienta"><h2 style="margin-top:0">Cómo te sienta cada cantidad</h2>${feelTable(admins.filter((a) => a.planId === p.id))}</div>
     ${p.phases?.length ? `<div class="card"><h2 style="margin-top:0">Frecuencia y cumplimiento</h2>
       ${(() => { const ad = adherence(p, admins, t); return `<p>Cumplimiento hasta hoy: <strong>${ad.pct == null ? '—' : `${ad.done} de ${ad.expected} (${ad.pct} %)`}</strong></p>`; })()}
       <ul class="plain">${p.phases.map((f, i) => { const sc = scheduleFor(p, f); return `<li><strong>${esc(phaseText(f))}</strong><br><span class="small">Se entiende: ${esc(scheduleText(sc))}${sc.overridden ? ' (corregido por ti)' : ''}${sc.notes.length ? ` · ${esc(sc.notes.join(' · '))}` : ''}</span>
-        <div class="row noprint" style="margin-top:.3rem"><button class="sec slim" data-freq="${i}">Corregir frecuencia</button></div></li>`; }).join('')}</ul></div>` : ''}
+        <div class="row noprint" style="margin-top:.3rem"><button class="sec slim" data-adj="${i}">Cambiar cantidad</button><button class="sec slim" data-freq="${i}">Corregir frecuencia</button></div></li>`; }).join('')}</ul></div>` : ''}
     <div class="card"><h2 style="margin-top:0">Revisiones</h2><div class="row">${REVIEW_DAYS.map((d) => `<a class="btn ${days === d ? '' : 'sec'}" href="#/plan/${p.id}?dias=${d}">${d} días (${fmtDate(addDays(p.start, d))})</a>`).join('')}</div>
       ${rep ? reportHTML(rep, products) : '<p class="muted">Elige una revisión para ver el informe.</p>'}</div>`;
   $('#edit').addEventListener('click', async () => {
@@ -149,6 +155,15 @@ export async function planDetalle(view, r, ctx) {
   const again = () => planDetalle(view, r, ctx);
   $('#pause')?.addEventListener('click', async () => { if (await pauseDialog(ctx, sibs, labelOf)) again(); });
   $$('[data-resume]').forEach((b) => b.addEventListener('click', async () => { if (await resumeDialog(ctx, sibs, pauses.find((x) => x.id === b.dataset.resume), labelOf)) again(); }));
+  $$('[data-pedit]').forEach((b) => b.addEventListener('click', async () => { if (await editPauseDialog(ctx, sibs, pauses.find((x) => x.id === b.dataset.pedit), labelOf)) again(); }));
+  $('#addNote').addEventListener('click', async () => { if (await noteDialog(ctx, p)) again(); });
+  $$('[data-note-edit]').forEach((b) => b.addEventListener('click', async () => { if (await noteDialog(ctx, p, p.guideNotes.find((n) => n.id === b.dataset.noteEdit))) again(); }));
+  $$('[data-note-del]').forEach((b) => b.addEventListener('click', async () => {
+    if (await dialog('<form><h2>Borrar la nota</h2><div class="row"><button class="sec">Borrar</button><button type="button" class="ghost" data-close>Cancelar</button></div></form>')) { await m.removeGuideNote(ctx.profileId, p.id, b.dataset.noteDel); again(); }
+  }));
+  $$('[data-adj]').forEach((b) => b.addEventListener('click', async () => { if (await adjustDialog(ctx, p, p.phases[b.dataset.adj])) { toast('Cantidad cambiada'); again(); } }));
+  $('#startBtn').addEventListener('click', async () => { if (await startDialog(ctx, sibs, labelOf)) again(); });
+  $('#backBtn')?.addEventListener('click', async () => { if (await backfillDialog(ctx, sibs)) again(); });
   $$('[data-unpause]').forEach((b) => b.addEventListener('click', async () => { if (await removePauseDialog(ctx, sibs, pauses.find((x) => x.id === b.dataset.unpause), labelOf)) again(); }));
   $$('[data-freq]').forEach((btn) => btn.addEventListener('click', async () => {
     const f = p.phases[btn.dataset.freq], sc = scheduleFor(p, f);

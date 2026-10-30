@@ -140,7 +140,8 @@ export function adherence(plan, admins, until) {
   const end = planEnd(plan);
   const last = end && end < until ? end : until;
   const mine = admins.filter((a) => a.planId === plan.id && DONE.has(a.status));
-  for (let d = plan.start; d && d <= last; d = addDays(d, 1)) {
+  const from = plan.trackFrom && plan.trackFrom > plan.start ? plan.trackFrom : plan.start; // ciclos dados de alta tarde
+  for (let d = from; d && d <= last; d = addDays(d, 1)) {
     const n = slotsOn(plan, d).length;
     if (n) { expected += n; done += Math.min(n, mine.filter((a) => a.date === d).length); }
     const ph = activePhase(plan, d);
@@ -150,6 +151,33 @@ export function adherence(plan, admins, until) {
     }
   }
   return { expected, done, pct: expected ? Math.round((done / expected) * 100) : null };
+}
+
+// Tomas previstas sin ningún registro (hecho u omitido) entre el inicio y «until»: para el alta retroactiva.
+// Días fijos: las que falten ese día. Cupo semanal: solo semanas completas, en los primeros días activos libres. A demanda: nada.
+export function missingDoses(plan, admins, until) {
+  const out = [], seenWeeks = new Set();
+  const mine = admins.filter((a) => a.planId === plan.id && (DONE.has(a.status) || a.status === 'omitido'));
+  const end = planEnd(plan), last = end && end < until ? end : until;
+  const at = (sc, i = 0) => sc.times[i] || MOMENTS[sc.moments[i] || sc.moments[0]]?.at || '09:00';
+  for (let d = plan.start; d && d <= last; d = addDays(d, 1)) {
+    const ph = activePhase(plan, d);
+    if (!ph) continue;
+    const sc = scheduleFor(plan, ph), amount = ph.amountMax == null ? ph.amount : null;
+    if (sc.kind === 'weekly') {
+      if (seenWeeks.has(ph.week)) continue;
+      seenWeeks.add(ph.week);
+      const w = weekRange(plan, ph.week);
+      if (w.to > last) continue;
+      let need = (sc.perWeek || 1) - mine.filter((a) => a.date >= w.from && a.date <= w.to).length;
+      for (let x = w.from; need > 0 && x <= w.to; x = addDays(x, 1)) if (activePhase(plan, x) && !mine.some((a) => a.date === x)) { out.push({ date: x, time: at(sc), amount, unit: ph.unit }); need--; }
+      continue;
+    }
+    const slots = slotsOn(plan, d);
+    const have = mine.filter((a) => a.date === d).length;
+    slots.slice(have).forEach((s) => out.push({ date: d, time: at(sc, s.index), amount, unit: ph.unit }));
+  }
+  return out;
 }
 
 export const amountText = (f) => (f?.amount == null ? '' : `${f.amount}${f.amountMax != null ? '–' + f.amountMax : ''} ${f.unit || ''}`.trim());
