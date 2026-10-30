@@ -1,10 +1,11 @@
 // Service worker: funciona sin conexión y gestiona avisos.
-const CACHE = 'registro-v13';
+const CACHE = 'registro-v14'; // igual que APP_VERSION en js/app.js
 const ASSETS = ['./', 'index.html', 'styles.css', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png',
   'js/app.js', 'js/ui.js', 'js/model.js', 'js/store.js', 'js/catalog.js', 'js/safety.js', 'js/notify.js', 'js/views1.js', 'js/views2.js', 'js/views3.js',
   'js/schedule.js', 'js/text.js', 'js/hoy.js', 'js/pausas.js', 'js/ajustes.js', 'fonts/atkinson-400.woff2', 'fonts/atkinson-700.woff2'];
 
-self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS)).then(() => self.skipWaiting())); });
+// cache: 'reload' → la versión nueva se instala con archivos recién descargados, nunca con copias viejas del navegador.
+self.addEventListener('install', (e) => { e.waitUntil(caches.open(CACHE).then((c) => c.addAll(ASSETS.map((u) => new Request(u, { cache: 'reload' })))).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => {
   e.waitUntil(caches.keys().then((ks) => Promise.all(ks.filter((k) => k !== CACHE).map((k) => caches.delete(k)))).then(() => self.clients.claim()));
 });
@@ -18,7 +19,7 @@ self.addEventListener('fetch', (e) => {
   if (req.method !== 'GET' || url.origin !== location.origin) return;
   if (/\/(fonts|icons)\//.test(url.pathname)) { e.respondWith(caches.match(req, { ignoreSearch: true }).then((hit) => hit || fetch(req))); return; }
   let saving = Promise.resolve();
-  const net = fetch(req).then((res) => {
+  const net = fetch(req, { cache: 'no-cache' }).then((res) => { // pregunta siempre al servidor si hay cambios
     if (res.ok) { const copy = res.clone(); saving = caches.open(CACHE).then((c) => c.put(req, copy)); }
     return res;
   });

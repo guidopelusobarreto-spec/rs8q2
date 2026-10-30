@@ -7,7 +7,7 @@ import { MOMENTS, scheduleText, amountText, adherence, totalWeeks } from './sche
 import { fmtDoc, fichaHTML, splitFichas, cleanInline } from './text.js';
 import { productOptions, exceedFlow } from './views1.js';
 import { confirmCompat } from './views3.js';
-import { installApp, appInstalledHere } from './app.js';
+import { installApp, appInstalledHere, APP_VERSION } from './app.js';
 
 const HUES = [205, 228, 252, 276, 300, 322, 188, 240, 265, 290];
 export const hueFor = (s) => { let h = 7; for (const c of String(s)) h = (h * 31 + c.charCodeAt(0)) >>> 0; return HUES[h % HUES.length]; };
@@ -268,7 +268,8 @@ export async function mas(view) {
     <a href="#/perfiles"><span>Personas</span></a>
     <a href="#/ajustes"><span>Ajustes<span class="small">Letra, PIN, copia de seguridad</span></span></a>
     ${appInstalledHere() ? '' : '<button id="inst">Instalar la app</button>'}
-    <a href="#/acerca">Avisos y límites de la app</a></div>`;
+    <a href="#/acerca">Avisos y límites de la app</a></div>
+    <p class="small muted" id="ver">Versión de la app: ${esc(APP_VERSION)}</p>`;
   $('#inst')?.addEventListener('click', installApp);
 }
 export async function acerca(view) {

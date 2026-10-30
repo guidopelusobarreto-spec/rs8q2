@@ -29,6 +29,7 @@ const ROUTES = {
   protocolos: H.protocolos, ficha: H.ficha, texto: H.texto, mas: H.mas, acerca: H.acerca,
 };
 
+export const APP_VERSION = 'v14 · 30-oct-2026'; // subir junto con CACHE en sw.js
 export const ctx = { store: null, model: null, profileId: null, ui: null, locked: false, lastActive: Date.now() };
 
 async function loadUI() {
@@ -141,7 +142,11 @@ async function init() {
   }, 15000);
   document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'visible') checkDue(ctx.model, ctx.store).catch(() => {}); });
   if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').then(() => tryPeriodicSync()).catch((e) => console.warn('SW', e));
+    // Cuando se instala una versión nueva, la página se recarga una vez para usarla (no en la primera instalación).
+    const hadController = !!navigator.serviceWorker.controller;
+    let reloaded = false;
+    navigator.serviceWorker.addEventListener('controllerchange', () => { if (hadController && !reloaded) { reloaded = true; location.reload(); } });
+    navigator.serviceWorker.register('sw.js').then((reg) => { tryPeriodicSync(); reg.update?.().catch(() => {}); }).catch((e) => console.warn('SW', e));
     navigator.serviceWorker.addEventListener('message', (e) => { if (e.data?.url) location.href = e.data.url; });
   }
   setInterval(() => checkDue(ctx.model, ctx.store).catch(() => {}), 30000);
