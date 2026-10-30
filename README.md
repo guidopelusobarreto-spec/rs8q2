@@ -36,8 +36,8 @@ La frecuencia de cada fase se lee del texto escrito por el usuario («3 veces po
 - `js/views1.js`, `js/views2.js`, `js/ui.js`, `js/notify.js` — interfaz, PIN, notificaciones, .ics
 
 ## Pruebas
-- `npm test` — 50 pruebas de la lógica (Node 22, sin dependencias); 2 necesitan `LIB_FILE=<biblioteca.json>`.
-- `LIB_FILE=<biblioteca.json> python3 -I tests/e2e.py http://localhost:8765/` — 121 comprobaciones de aceptación en Chromium (Playwright), a 320 y 360 px.
+- `npm test` — 51 pruebas de la lógica (Node 22, sin dependencias); 2 necesitan `LIB_FILE=<biblioteca.json>`.
+- `LIB_FILE=<biblioteca.json> python3 -I tests/e2e.py http://localhost:8765/` — 125 comprobaciones de aceptación en Chromium (Playwright), a 320 y 360 px.
 - `python3 -I tests/e2e_red_lenta.py .` — arranque con la red a 8 s (debe abrir en menos de 6 s).
 
 ## Limitaciones conocidas

@@ -81,6 +81,8 @@ export function scheduleText(sc) {
 const DONE = new Set(['realizado', 'retrasado']);
 // Un registro cuenta para un plan si está vinculado a él o si no tiene plan y es de la misma presentación
 // (p. ej. una toma anotada desde un recordatorio o desde «Registrar» sin elegir plan).
+// Día al que cuenta una toma: el suyo, o la toma prevista que cubre si se adelantó o se retrasó (a.forDate).
+export const when = (a) => a.forDate || a.date;
 export const belongsTo = (a, plan) => a.planId === plan.id || (!a.planId && !!plan.productId && a.productId === plan.productId);
 const activePhase = (plan, date) => {
   if (plan.closed || !plan.start || date < plan.start) return null;
@@ -109,7 +111,7 @@ export function slotsOn(plan, date) {
 // Agenda de un día: tomas fijas con su estado, cupos semanales, a demanda y fases sin frecuencia reconocida.
 export function buildAgenda({ plans, admins, date, snoozes = {}, now = new Date().toISOString() }) {
   const out = { date, slots: [], weekly: [], demand: [], unknown: [] };
-  const byPlan = (plan, from, to) => admins.filter((a) => belongsTo(a, plan) && a.date >= from && a.date <= to && a.status !== 'cancelado');
+  const byPlan = (plan, from, to) => admins.filter((a) => belongsTo(a, plan) && when(a) >= from && when(a) <= to && a.status !== 'cancelado');
   for (const plan of plans) {
     const ph = activePhase(plan, date);
     if (!ph) continue;
@@ -146,11 +148,11 @@ export function adherence(plan, admins, until) {
   const from = plan.trackFrom && plan.trackFrom > plan.start ? plan.trackFrom : plan.start; // ciclos dados de alta tarde
   for (let d = from; d && d <= last; d = addDays(d, 1)) {
     const n = slotsOn(plan, d).length;
-    if (n) { expected += n; done += Math.min(n, mine.filter((a) => a.date === d).length); }
+    if (n) { expected += n; done += Math.min(n, mine.filter((a) => when(a) === d).length); }
     const ph = activePhase(plan, d);
     if (ph && scheduleFor(plan, ph).kind === 'weekly') {
       const w = weekRange(plan, ph.week);
-      if (d === w.to) { const need = scheduleFor(plan, ph).perWeek || 1; expected += need; done += Math.min(need, mine.filter((a) => a.date >= w.from && a.date <= w.to).length); }
+      if (d === w.to) { const need = scheduleFor(plan, ph).perWeek || 1; expected += need; done += Math.min(need, mine.filter((a) => when(a) >= w.from && when(a) <= w.to).length); }
     }
   }
   return { expected, done, pct: expected ? Math.round((done / expected) * 100) : null };
@@ -172,12 +174,12 @@ export function missingDoses(plan, admins, until) {
       seenWeeks.add(ph.week);
       const w = weekRange(plan, ph.week);
       if (w.to > last) continue;
-      let need = (sc.perWeek || 1) - mine.filter((a) => a.date >= w.from && a.date <= w.to).length;
-      for (let x = w.from; need > 0 && x <= w.to; x = addDays(x, 1)) if (activePhase(plan, x) && !mine.some((a) => a.date === x)) { out.push({ date: x, time: at(sc), amount, unit: ph.unit }); need--; }
+      let need = (sc.perWeek || 1) - mine.filter((a) => when(a) >= w.from && when(a) <= w.to).length;
+      for (let x = w.from; need > 0 && x <= w.to; x = addDays(x, 1)) if (activePhase(plan, x) && !mine.some((a) => when(a) === x)) { out.push({ date: x, time: at(sc), amount, unit: ph.unit }); need--; }
       continue;
     }
     const slots = slotsOn(plan, d);
-    const have = mine.filter((a) => a.date === d).length;
+    const have = mine.filter((a) => when(a) === d).length;
     slots.slice(have).forEach((s) => out.push({ date: d, time: at(sc, s.index), amount, unit: ph.unit }));
   }
   return out;

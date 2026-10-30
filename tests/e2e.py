@@ -277,7 +277,7 @@ with sync_playwright() as p:
     # «Otra cantidad» en Hoy: un paso, queda a la vista y en el historial
     go(page, '#/'); page.wait_for_timeout(500)
     d3 = page.locator('.dose', has_text='Vitamina D3')
-    d3.locator('button:has-text("Otra cantidad")').click(); page.wait_for_timeout(300)
+    d3.locator('button:has-text("Otro día o cantidad")').click(); page.wait_for_timeout(300)
     d = dlg(page)
     ok('otra cantidad: ventana con la cantidad del plan', d.locator('[name=amount]').input_value() == '5000' and d.locator('[name=notes]').count() == 1)
     d.locator('[name=amount]').fill('4000'); d.locator('[name=notes]').fill('nota e2e'); d.locator('button:has-text("Guardar")').click(); page.wait_for_timeout(600)
@@ -350,7 +350,7 @@ with sync_playwright() as p:
     ok('hoy: tu protocolo como guía, ficha de mujeres', 'Tu protocolo · 2. Retatrutida (Mujeres)' in rt.inner_text() and rt.locator('details.proto').count() == 1)
     rt.locator('details.proto summary').click(); page.wait_for_timeout(200)
     ok('hoy: la guía muestra tus notas y advertencias', 'no escalar la dosis' in rt.inner_text())
-    cr.locator('button:has-text("Otra cantidad")').click(); page.wait_for_timeout(300)
+    cr.locator('button:has-text("Otro día o cantidad")').click(); page.wait_for_timeout(300)
     dlg(page).locator('[name=amount]').fill('6'); dlg(page).locator('button:has-text("Guardar")').click(); page.wait_for_timeout(600)
     ok('por encima del plan: pregunta si es un ajuste', 'Por encima de tu plan' in dlg(page).inner_text())
     dlg(page).locator('button:has-text("Sí, ajuste mío")').click(); page.wait_for_timeout(700)
@@ -405,6 +405,17 @@ with sync_playwright() as p:
     page.locator('main li', has_text='Creatina').locator('button:has-text("Confirmar / corregir")').click(); page.wait_for_timeout(300)
     ok('historial: se puede vincular la toma a un plan', dlg(page).locator('[name=planId] option', has_text='Creatina').count() >= 1)
     dlg(page).locator('[data-close]').first.click(); page.wait_for_timeout(200)
+
+    # toma adelantada: se registra el día real y cuenta como la prevista
+    go(page, f'#/?d={tom}'); page.wait_for_timeout(500)
+    page.locator('.dose', has_text='Vitamina D3').locator('button:has-text("Otro día o cantidad")').click(); page.wait_for_timeout(300)
+    d = dlg(page); ok('otro día: la ventana pide el día real', d.locator('[name=day]').input_value() == tom)
+    d.locator('[name=day]').fill(iso(today)); d.locator('button:has-text("Guardar")').click(); page.wait_for_timeout(700)
+    ok('otro día: la prevista de mañana queda hecha con la fecha real', f'Hecho el {today.strftime("%d/%m")}' in page.locator('.dose.done', has_text='Vitamina D3').inner_text())
+    go(page, f'#/calendario?v=dia&d={tom}'); page.wait_for_timeout(400)
+    ok('otro día: el calendario de mañana no la da por pendiente', 'Vitamina D3' not in page.inner_text('main'))
+    go(page, f'#/historial?from={iso(today)}&to={iso(today)}'); page.wait_for_timeout(400)
+    ok('otro día: el historial lo explica', f'Cuenta como la toma prevista del {(today + dt.timedelta(days=1)).strftime("%d/%m/%Y")}' in page.inner_text('main'))
 
     # importador de texto
     go(page, '#/planes'); page.wait_for_timeout(200); page.click('#imp')

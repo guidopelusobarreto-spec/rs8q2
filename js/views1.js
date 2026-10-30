@@ -176,7 +176,7 @@ export async function historial(view, r, ctx) {
     <div class="card"><p class="muted small">${rows.length} registros</p>
     ${rows.length ? `<ul class="plain">${rows.map((a) => { const p = pname(a.productId); return `<li>
       <strong>${fmtDate(a.date)} ${a.time}</strong> — ${esc(p?.substance || a.productId)} ${ruoBadge(p)}<br>
-      ${ADMIN_STATUS[a.status]} · Cantidad: ${a.amount != null ? `${fmtNum(a.amount, 4)} ${esc(a.unit)}` : '—'}${a.route ? ' · ' + esc(a.route) : ''}${a.lotText ? ' · lote ' + esc(a.lotText) : ''}${feelChip(a)}${a.aboveIntent ? ' <span class="chip">Por encima del plan, ajuste tuyo</span>' : ''}
+      ${ADMIN_STATUS[a.status]} · Cantidad: ${a.amount != null ? `${fmtNum(a.amount, 4)} ${esc(a.unit)}` : '—'}${a.route ? ' · ' + esc(a.route) : ''}${a.lotText ? ' · lote ' + esc(a.lotText) : ''}${feelChip(a)}${a.aboveIntent ? ' <span class="chip">Por encima del plan, ajuste tuyo</span>' : ''}${a.forDate ? `<br><span class="small">Cuenta como la toma prevista del ${fmtDate(a.forDate)}</span>` : ''}
       ${a.symptoms ? `<br><span class="small">Síntomas: ${esc(a.symptoms)}</span>` : ''}${a.adverse ? `<br><span class="small">Efectos adversos: ${esc(a.adverse)}</span>` : ''}
       ${a.history?.length ? `<br><span class="small muted">Modificado ${a.history.length} vez/veces</span>` : ''}
       <div class="row noprint" style="margin-top:.3rem"><button class="sec" data-edit="${a.id}">Confirmar / corregir</button></div></li>`; }).join('')}</ul>` : '<p class="muted">Sin registros con estos filtros.</p>'}</div>`;
@@ -189,6 +189,7 @@ export async function historial(view, r, ctx) {
       <div class="grid">${field('Fecha', inp('date', a.date, 'type="date"'))}${field('Hora', inp('time', a.time, 'type="time"'))}
       ${field('Cantidad', inp('amount', a.amount ?? '', 'type="number" step="any" min="0"'))}${field('Unidad', inp('unit', a.unit, 'list="units"'))}</div>
       ${field('Plan asociado', `<select name="planId"><option value="">— Ninguno —</option>${plans.map((p) => opt(p.id, `${p.name || PLAN_MODES[p.mode]} (desde ${fmtDate(p.start)})`, a.planId)).join('')}</select>`)}
+      ${field('Cuenta como la toma prevista del (si la adelantaste o la retrasaste)', inp('forDate', a.forDate || '', 'type="date"'))}
       ${feelSelect(a.feel)}
       ${field('Síntomas posteriores', `<textarea name="symptoms">${esc(a.symptoms)}</textarea>`)}
       ${field('Efectos adversos', `<textarea name="adverse">${esc(a.adverse)}</textarea>`)}
@@ -196,7 +197,7 @@ export async function historial(view, r, ctx) {
       <h3>Historial de cambios</h3>${hist ? `<ul class="small">${hist}</ul>` : '<p class="muted small">Sin cambios.</p>'}
       <div class="row"><button>Guardar</button><button type="button" class="sec" data-close>Cancelar</button></div></form>`, {
       onSubmit: async (d) => {
-        const patch = { ...d, amount: d.amount === '' ? null : Number(d.amount) };
+        const patch = { ...d, amount: d.amount === '' ? null : Number(d.amount), forDate: d.forDate && d.forDate !== d.date ? d.forDate : '' };
         const u = await m.updateAdministration(pid, a.id, patch);
         const plan = u.planId ? await ctx.store.get('plans', u.planId) : null;
         const check = m.checkAdministration(u, plan);

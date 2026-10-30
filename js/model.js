@@ -433,7 +433,7 @@ export class Model {
     const rec = await this._add('administrations', profileId, { productId: d.productId, planId: d.planId || '', date: d.date, time: d.time,
       amount: num(d.amount), unit: d.unit || '', route: d.route || '', lotId: d.lotId || '', lotText: d.lotText || '', unitsUsed: num(d.unitsUsed),
       notes: d.notes || '', symptoms: d.symptoms || '', adverse: d.adverse || '', status, weightKg: num(d.weightKg), source: d.source || '',
-      feel: FEEL[d.feel] ? d.feel : '', aboveIntent: !!d.aboveIntent });
+      feel: FEEL[d.feel] ? d.feel : '', aboveIntent: !!d.aboveIntent, forDate: isDate(d.forDate) && d.forDate !== d.date ? d.forDate : '' });
     if (rec.weightKg) await this.addWeight(profileId, { date: d.date, kg: rec.weightKg, note: 'Anotado con un registro' });
     return { admin: rec, check: this.checkAdministration(rec, plan) };
   }
@@ -450,6 +450,7 @@ export class Model {
   // Confirmar o corregir conserva el historial de cambios.
   async updateAdministration(profileId, id, patch) {
     if (patch.status) must(ADMIN_STATUS[patch.status], 'Estado no válido');
+    if (patch.forDate) must(isDate(patch.forDate), 'Fecha de la toma prevista no válida');
     if (patch.planId) { const pl = await this.store.get('plans', patch.planId); must(pl && pl.profileId === profileId, 'El plan pertenece a otro perfil'); }
     return this._update('administrations', id, patch, profileId);
   }
@@ -556,7 +557,7 @@ export class Model {
     const add = (date, type, text, ref, time = '') => { if (date >= from && date <= to) items.push({ date, time, type, text, ref }); };
     const name = async (id) => (await this.product(id))?.substance || '';
     for (const r of await this.list('reminders', profileId)) for (const o of occurrences(r, from, to)) add(o.date, 'recordatorio', r.label, r.id, o.time);
-    for (const a of await this.list('administrations', profileId)) add(a.date, 'registro', `${await name(a.productId)} — ${ADMIN_STATUS[a.status]}${a.amount != null ? ` (${a.amount} ${a.unit})` : ''}`, a.id, a.time);
+    for (const a of await this.list('administrations', profileId)) add(a.date, 'registro', `${await name(a.productId)} — ${ADMIN_STATUS[a.status]}${a.amount != null ? ` (${a.amount} ${a.unit})` : ''}${a.forDate ? ` · cuenta como la prevista del ${esD(a.forDate)}` : ''}`, a.id, a.time);
     for (const p of await this.list('plans', profileId)) {
       const end = planEnd(p);
       add(p.start, p.mode === 'descanso' ? 'descanso' : 'ciclo', `Inicio: ${p.name || PLAN_MODES[p.mode]}`, p.id);

@@ -131,3 +131,19 @@ test('modelo: vincular una toma a un plan de otro perfil no se permite', async (
   const { admin } = await m.addAdministration(a.id, { productId: 'reta15', date: '2026-10-20', time: '09:00', status: 'realizado' });
   await assert.rejects(m.updateAdministration(a.id, admin.id, { planId: pb.id }), /otro perfil/);
 });
+
+test('toma adelantada: cuenta como la prevista de otro día', async () => {
+  const { buildAgenda } = await import('../js/schedule.js');
+  const plan = { id: 'p', productId: 'reta15', start: '2026-09-04', duration: 16, durationUnit: 'semanas', phases: [ph(1, 16, 2, 'viernes a las 21:30')] };
+  const early = { id: 'a', planId: 'p', productId: 'reta15', date: '2026-10-22', time: '21:30', status: 'realizado', forDate: '2026-10-23' };
+  assert.equal(buildAgenda({ plans: [plan], admins: [early], date: '2026-10-23' }).slots[0].status, 'done');
+  assert.equal(buildAgenda({ plans: [plan], admins: [{ ...early, forDate: '' }], date: '2026-10-23' }).slots[0].status, 'pending', 'sin indicarlo no se adivina');
+  assert.equal(adherence(plan, [early], '2026-10-23').done, 1);
+  assert.equal(missingDoses(plan, [early], '2026-10-23').filter((x) => x.date === '2026-10-23').length, 0);
+  const { m, a } = await mk();
+  const { admin } = await m.addAdministration(a.id, { productId: 'reta15', date: '2026-10-22', time: '21:30', status: 'realizado', forDate: '2026-10-23' });
+  assert.equal(admin.forDate, '2026-10-23');
+  const { admin: same } = await m.addAdministration(a.id, { productId: 'reta15', date: '2026-10-22', time: '21:30', status: 'realizado', forDate: '2026-10-22' });
+  assert.equal(same.forDate, '', 'el mismo día no hace falta');
+  await assert.rejects(m.updateAdministration(a.id, admin.id, { forDate: 'x' }), /no válida/);
+});

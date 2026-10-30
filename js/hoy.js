@@ -93,9 +93,9 @@ export async function hoy(view, r, ctx) {
   const card = (s) => {
     const label = L(s.plan), cls = s.status === 'done' ? 'done' : s.status === 'omitted' ? 'omitted' : '';
     const when = s.time || (s.moment ? MOMENTS[s.moment].label : '');
-    const acts = s.status === 'done' ? `<span><span class="chip ok">✓ Hecho a las ${esc(s.admin.time)}</span>${otherAmt(s.admin, s.phase)}${feelChip(s.admin)}</span>${feelBtn(s.admin)}<button class="link" data-undo="${s.admin.id}">Deshacer</button>`
+    const acts = s.status === 'done' ? `<span><span class="chip ok">✓ Hecho ${s.admin.date !== date ? `el ${esc(fmtDate(s.admin.date).slice(0, 5))} ` : ''}a las ${esc(s.admin.time)}</span>${otherAmt(s.admin, s.phase)}${feelChip(s.admin)}</span>${feelBtn(s.admin)}<button class="link" data-undo="${s.admin.id}">Deshacer</button>`
       : s.status === 'omitted' ? `<span class="chip">Omitido</span><button class="link" data-undo="${s.admin.id}">Deshacer</button>`
-      : `<button class="ok" data-do="done" data-k="${esc(s.key)}">Hecho</button><button class="ghost" data-do="later" data-k="${esc(s.key)}">Más tarde</button><button class="ghost" data-do="skip" data-k="${esc(s.key)}">Omitir</button><button class="ghost" data-do="other" data-k="${esc(s.key)}">Otra cantidad</button>`;
+      : `<button class="ok" data-do="done" data-k="${esc(s.key)}">Hecho</button><button class="ghost" data-do="later" data-k="${esc(s.key)}">Más tarde</button><button class="ghost" data-do="skip" data-k="${esc(s.key)}">Omitir</button><button class="ghost" data-do="other" data-k="${esc(s.key)}">Otro día o cantidad</button>`;
     return `<div class="dose ${cls}" style="--h:${hueFor(label)}"><div class="top"><span class="name">${esc(label)}</span><span class="amt">${esc(amountText(s.phase) || '—')}</span></div>
       ${freqLine(s.phase, s.sched)}${when && s.sched.perDay > 1 ? `<p class="freq">${esc(when)}</p>` : ''}${guideBox(notesFor(s.plan, date))}${proto(s.plan)}
       ${s.status === 'snoozed' ? `<p><span class="chip warn">Pospuesta hasta las ${new Date(s.snoozedUntil).toTimeString().slice(0, 5)}</span></p>` : ''}
@@ -107,7 +107,7 @@ export async function hoy(view, r, ctx) {
     return `<div class="dose ${done ? 'done' : ''}" style="--h:${hueFor(label)}"><div class="top"><span class="name">${esc(label)}</span><span class="amt">${esc(amountText(w.phase) || '—')}</span></div>
       ${freqLine(w.phase, w.sched)}${guideBox(notesFor(w.plan, date))}${proto(w.plan)}<p class="freq">Esta semana del plan (${fmtDate(w.weekStart)} – ${fmtDate(w.weekEnd)}): <strong>${w.count} de ${w.needed}</strong></p>
       <div class="acts">${w.today.length ? `<span><span class="chip ok">✓ Hecho hoy a las ${esc(w.today[w.today.length - 1].time)}</span>${otherAmt(w.today[w.today.length - 1], w.phase)}${feelChip(w.today[w.today.length - 1])}</span>${feelBtn(w.today[w.today.length - 1])}<button class="link" data-undo="${w.today[w.today.length - 1].id}">Deshacer</button>`
-        : done ? '<span class="chip ok">✓ Completo esta semana</span>' : `<button class="ok" data-do="wdone" data-i="${i}">Hecho hoy</button><button class="ghost" data-do="wother" data-i="${i}">Otra cantidad</button>`}</div></div>`;
+        : done ? '<span class="chip ok">✓ Completo esta semana</span>' : `<button class="ok" data-do="wdone" data-i="${i}">Hecho hoy</button><button class="ghost" data-do="wother" data-i="${i}">Otro día o cantidad</button>`}</div></div>`;
   }).join('');
   const demand = ag.demand.map((d, i) => {
     const label = L(d.plan), max = d.sched.maxPerWeek;
@@ -158,13 +158,14 @@ export async function hoy(view, r, ctx) {
       if (d === 'demand' || other || amount == null) {
         const res = await dialog(`<form><h2>${esc(L(it.plan))}</h2><p class="small">Tu plan: <strong>${esc(amountText(ph) || '—')}</strong> · ${esc(ph.frequency)}${ph.note ? ` · ${esc(ph.note)}` : ''}</p>
           <div class="grid">${field(`Cantidad (${esc(ph.unit || 'unidad')})`, inp('amount', amount ?? '', 'type="number" step="any" min="0" inputmode="decimal" required'), true)}${field('Hora', inp('time', time, 'type="time" required'), true)}</div>
-          ${other ? field('Nota (opcional)', inp('notes', '', 'maxlength="200"')) : ''}
+          ${other ? field('Día en que la tomaste', inp('day', date, 'type="date" required'), true) + (d === 'other' ? '<p class="small muted">Si la adelantaste o la retrasaste, pon el día real: contará como la toma prevista de este día.</p>' : '') + field('Nota (opcional)', inp('notes', '', 'maxlength="200"')) : ''}
           ${s.maxPerWeek && it.count >= s.maxPerWeek ? `<div class="alert aviso">Esta semana ya hay ${it.count} tomas y tu protocolo dice «máximo ${s.maxPerWeek} por semana».</div>` : ''}
           <div class="row"><button class="ok">Guardar</button><button type="button" class="ghost" data-close>Cancelar</button></div></form>`, { onSubmit: (x) => x });
         if (!res) return again();
-        amount = res.amount; it._time = res.time; notes = res.notes || '';
+        amount = res.amount; it._time = res.time; notes = res.notes || ''; it._day = res.day || '';
       }
-      const ok = await register(ctx, { plan: it.plan, phase: ph, date, time: it._time || time, status: d === 'skip' ? 'omitido' : 'realizado', amount, label: L(it.plan), notes });
+      const day = it._day || date, forDate = d === 'other' && day !== date ? date : '';
+      const ok = await register(ctx, { plan: it.plan, phase: ph, date: day, time: it._time || time, status: d === 'skip' ? 'omitido' : 'realizado', amount, label: L(it.plan), notes, forDate });
       if (ok) toast(d === 'skip' ? 'Omitida' : 'Hecho ✓');
       again();
     } catch (err) { toast('No se guardó: ' + err.message); again(); }
@@ -172,7 +173,7 @@ export async function hoy(view, r, ctx) {
 }
 
 // Registra una toma de un plan; si el plan no tiene presentación del catálogo, se pide una vez y se guarda en el plan.
-async function register(ctx, { plan, phase, date, time, status, amount, label, notes = '' }) {
+async function register(ctx, { plan, phase, date, time, status, amount, label, notes = '', forDate = '' }) {
   const m = ctx.model, pid = ctx.profileId;
   let productId = plan.productId;
   if (!productId) {
@@ -187,7 +188,7 @@ async function register(ctx, { plan, phase, date, time, status, amount, label, n
     const warns = await m.compatCheck(pid, { items: [{ productId }], from: date, to: date });
     if (warns.length && !(await confirmCompat(warns))) return false;
   }
-  const { admin, check } = await m.addAdministration(pid, { productId, planId: plan.id, date, time, amount: status === 'omitido' ? '' : amount, unit: phase.unit, status, notes, source: 'Pantalla Hoy' });
+  const { admin, check } = await m.addAdministration(pid, { productId, planId: plan.id, date, time, amount: status === 'omitido' ? '' : amount, unit: phase.unit, status, notes, forDate, source: 'Pantalla Hoy' });
   if (check.comparable && check.exceeded) await exceedFlow(ctx, admin, check);
   return true;
 }
