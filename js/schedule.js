@@ -4,7 +4,7 @@ import { addDays, diffDays, planEnd, planBaseEnd, phaseFor, activeDay, dateOfAct
 
 export const MOMENTS = { manana: { label: 'Mañana', at: '09:00' }, mediodia: { label: 'Mediodía', at: '13:00' }, tarde: { label: 'Tarde', at: '17:00' }, noche: { label: 'Noche', at: '21:00' } };
 export const DAY_NAMES = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
-export const KINDS = { daily: 'Todos los días', days: 'Días concretos de la semana', weekly: 'Veces por semana (días libres)', everyN: 'Cada N días', demand: 'A demanda', unknown: 'Sin frecuencia reconocida' };
+export const KINDS = { daily: 'Todos los días', days: 'Días concretos de la semana', weekly: 'Veces por semana (días libres)', everyN: 'Cada N días', interval: 'Cada N a M días (desde la última toma)', demand: 'A demanda', unknown: 'Sin frecuencia reconocida' };
 const NUM = { un: 1, una: 1, uno: 1, dos: 2, tres: 3, cuatro: 4, cinco: 5, seis: 6, siete: 7 };
 const N = '(\\d+|una?|uno|dos|tres|cuatro|cinco|seis|siete)';
 const num = (x) => (x == null ? null : /^\d+$/.test(x) ? +x : NUM[x] ?? null);
@@ -13,7 +13,7 @@ const pad = (n) => String(n).padStart(2, '0');
 const dow = (d) => new Date(d + 'T12:00:00Z').getUTCDay();
 
 export function parseFrequency(text) {
-  const out = { kind: 'unknown', perDay: 1, days: [], perWeek: null, everyN: null, times: [], moments: [], maxPerWeek: null, notes: [] };
+  const out = { kind: 'unknown', perDay: 1, perDayMax: null, days: [], perWeek: null, everyN: null, everyMax: null, times: [], moments: [], maxPerWeek: null, notes: [] };
   let s = norm(text);
   if (!s.trim()) return out;
   // «máximo 1 o 2 veces por semana» es un límite, no una pauta
@@ -38,7 +38,11 @@ export function parseFrequency(text) {
   for (const m of s.matchAll(/\b(lunes|martes|miercoles|jueves|viernes|sabado|domingo)\b/g)) days.add(named.indexOf(m[1]));
   if (!days.size && /\bl\s*-\s*m\s*-\s*v\b/.test(s)) { [1, 3, 5].forEach((d) => days.add(d)); out.notes.push('«L-M-V» leído como lunes, miércoles y viernes'); }
   if (days.size && /\bej\.|por ejemplo/.test(s)) out.notes.push('Días de ejemplo en tu texto');
-  const perDayM = s.match(new RegExp(`${N}\\s+(?:vez|veces|aplicacion(?:es)?|tomas?)\\b[^,;()]*?\\b(?:al|por|cada)\\s+dia\\b`));
+  // «1 a 2 veces al día»: la primera cifra es obligatoria; las demás, opcionales.
+  const rangeDayM = s.match(new RegExp(`${N}\\s+a\\s+${N}\\s+(?:vez|veces|aplicacion(?:es)?|tomas?|batidos?)\\b[^,;()]*?\\b(?:al|por|cada)\\s+dia\\b`));
+  const perDayM = rangeDayM ? [rangeDayM[0], rangeDayM[1]] : s.match(new RegExp(`${N}\\s+(?:vez|veces|aplicacion(?:es)?|tomas?)\\b[^,;()]*?\\b(?:al|por|cada)\\s+dia\\b`));
+  if (rangeDayM) { out.perDayMax = num(rangeDayM[2]); out.notes.push(`Hasta ${out.perDayMax} al día: ${num(rangeDayM[1])} prevista(s); las demás son opcionales (regístralas como toma suelta)`); }
+  const intervalM = s.match(/cada\s+(\d+)\s+(?:a|-|–)\s+(\d+)\s+dias/);
   const perWeekM = s.match(new RegExp(`${N}\\s+(?:vez|veces|aplicacion(?:es)?|tomas?)\\s+(?:a|por|cada)\\s+(?:la\\s+)?semana`));
   const activeM = s.match(/(\d+)\s+dias?\s+activos?/);
   const everyM = s.match(/cada\s+(\d+)\s+dias/);
@@ -49,6 +53,7 @@ export function parseFrequency(text) {
     out.kind = 'days'; out.days = [...days].sort((a, b) => ((a + 6) % 7) - ((b + 6) % 7));
     if (perWeekM && num(perWeekM[1]) !== out.days.length) out.notes.push(`Tu texto dice ${num(perWeekM[1])} veces por semana y nombra ${out.days.length} días`);
   } else if (daily) out.kind = 'daily';
+  else if (intervalM) { out.kind = 'interval'; out.everyN = +intervalM[1]; out.everyMax = +intervalM[2]; }
   else if (everyM) { out.kind = 'everyN'; out.everyN = +everyM[1]; }
   else if (perWeekM || /\bsemanal\b/.test(s)) { out.kind = 'weekly'; out.perWeek = perWeekM ? num(perWeekM[1]) : 1; }
   else if (/demanda|puntual|episodic|dosis unica|toma unica|antes del encuentro|antes de la actividad/.test(s)) out.kind = 'demand';
@@ -69,10 +74,11 @@ export function scheduleText(sc) {
   const per = sc.perDay > 1 ? ` · ${sc.perDay} veces` : '';
   const list = (a) => (a.length > 1 ? a.slice(0, -1).join(', ') + ' y ' + a[a.length - 1] : a[0] || '');
   switch (sc.kind) {
-    case 'daily': return `Todos los días${per || ' · 1 vez'}${at}${mom}`;
+    case 'daily': return `Todos los días${per || ' · 1 vez'}${sc.perDayMax > (sc.perDay || 1) ? ` (hasta ${sc.perDayMax})` : ''}${at}${mom}`;
     case 'days': return `${list(sc.days.map((d) => DAY_NAMES[d]))}${per}${at}${mom}`;
     case 'weekly': return `${sc.perWeek} ${sc.perWeek === 1 ? 'vez' : 'veces'} por semana, el día que elijas${at}${mom}`;
     case 'everyN': return `Cada ${sc.everyN} días${per}${at}${mom}`;
+    case 'interval': return `Cada ${sc.everyN} a ${sc.everyMax || sc.everyN} días desde la última toma${at}${mom}`;
     case 'demand': return `A demanda${sc.maxPerWeek ? ` · máximo ${sc.maxPerWeek} por semana` : ''}`;
     default: return 'Sin frecuencia reconocida: corrígela en el plan';
   }
@@ -110,7 +116,7 @@ export function slotsOn(plan, date) {
 
 // Agenda de un día: tomas fijas con su estado, cupos semanales, a demanda y fases sin frecuencia reconocida.
 export function buildAgenda({ plans, admins, date, snoozes = {}, now = new Date().toISOString() }) {
-  const out = { date, slots: [], weekly: [], demand: [], unknown: [] };
+  const out = { date, slots: [], weekly: [], demand: [], interval: [], unknown: [] };
   const byPlan = (plan, from, to) => admins.filter((a) => belongsTo(a, plan) && when(a) >= from && when(a) <= to && a.status !== 'cancelado');
   for (const plan of plans) {
     const ph = activePhase(plan, date);
@@ -122,6 +128,15 @@ export function buildAgenda({ plans, admins, date, snoozes = {}, now = new Date(
       const item = { plan, phase: ph, sched: sc, weekStart: w.from, weekEnd: w.to, count: list.length, today: list.filter((a) => a.date === date) };
       if (sc.kind === 'weekly') out.weekly.push({ ...item, needed: sc.perWeek || 1 });
       else out.demand.push(item);
+      continue;
+    }
+    if (sc.kind === 'interval') {
+      // Ventana desde la última toma: entre +N y +M días. Sin tomas previas, desde el inicio de la fase.
+      const done = admins.filter((a) => belongsTo(a, plan) && DONE.has(a.status)).sort((a, b) => (when(a) + a.time).localeCompare(when(b) + b.time));
+      const today = done.filter((a) => when(a) === date), last = done.filter((a) => when(a) < date).pop() || null;
+      const from = last ? addDays(when(last), sc.everyN) : dateOfActiveDay(plan, (ph.fromWeek - 1) * 7);
+      const to = last ? addDays(when(last), sc.everyMax || sc.everyN) : from;
+      if (today.length || date >= from) out.interval.push({ plan, phase: ph, sched: sc, last, from, to, today, late: !today.length && date > to });
       continue;
     }
     if (sc.kind === 'unknown') { out.unknown.push({ plan, phase: ph, sched: sc }); continue; }

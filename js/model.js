@@ -1,7 +1,7 @@
 // Lógica de la app, independiente de la interfaz. Todo registro lleva profileId y se filtra por él.
 import { CATALOG, RUO_LABEL } from './catalog.js';
 import { COLLECTIONS } from './store.js';
-import { buildAgenda, amountText, missingDoses } from './schedule.js';
+import { buildAgenda, amountText, missingDoses, belongsTo, when, parseFrequency } from './schedule.js';
 
 export const ADMIN_STATUS = { realizado: 'Realizado', omitido: 'Omitido', retrasado: 'Retrasado', cancelado: 'Cancelado', pendiente: 'Pendiente de confirmar' };
 export const PLAN_MODES = {
@@ -283,7 +283,7 @@ export class Model {
       duration: num(d.duration), durationUnit: d.durationUnit || 'dias', plannedAmount: num(d.plannedAmount), plannedUnit: d.plannedUnit || '', phases: parsePhases(d.phases),
       scheduleNote: d.scheduleNote || '', reviewEveryDays: num(d.reviewEveryDays), source: d.source || '', enteredBy: d.enteredBy || '',
       alerts: { d7: true, d2: true, d0: true, overdue: true, afterEnd: true, ...(d.alerts || {}) }, notes: d.notes || '',
-      templateId: d.templateId || '', substance: d.substance || '' };
+      templateId: d.templateId || '', substance: d.substance || '', ficha: d.ficha ? String(d.ficha) : '' };
     rec.computedEnd = planEnd(rec);
     return this._add('plans', profileId, rec);
   }
@@ -412,6 +412,38 @@ export class Model {
     return { added, skipped };
   }
 
+  // Cambiar de protocolo sin perder lo pasado: los planes nuevos empiezan en la misma fecha (las semanas que llevas cuentan),
+  // las tomas, pausas y notas de cada sustancia pasan al plan nuevo de la misma sustancia, y los planes elegidos se cierran.
+  // Una sustancia nueva en el protocolo cuenta su cumplimiento desde hoy (no aparece en rojo hacia atrás).
+  async switchProtocol(profileId, oldPlanIds, templateId, { start, duration = '', closeIds = oldPlanIds } = {}) {
+    const olds = [];
+    for (const id of oldPlanIds) olds.push(await this._plan(profileId, id));
+    const t = await this.store.get('templates', templateId);
+    must(t, 'Protocolo no encontrado');
+    const st = start || olds[0]?.start;
+    must(isDate(st), 'Indica la fecha de inicio');
+    const norm = (x) => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/[\s(—-]/)[0];
+    const match = (it) => olds.find((o) => (it.productId && o.productId === it.productId) || (it.substance && o.substance && norm(o.substance) === norm(it.substance)));
+    const products = Object.fromEntries(t.items.map((it, i) => [i, it.productId || match(it)?.productId || '']));
+    const created = await this.applyTemplate(profileId, templateId, { start: st, duration, products });
+    const today = this.today(), admins = await this.list('administrations', profileId), moved = new Set();
+    for (const [i, np] of created.entries()) {
+      const o = match(t.items[i]);
+      if (!o || moved.has(o.id)) { if (st < today) await this.updatePlan(profileId, np.id, { trackFrom: today }); continue; }
+      moved.add(o.id);
+      for (const a of admins.filter((x) => x.planId === o.id)) await this._update('administrations', a.id, { planId: np.id }, profileId);
+      // Tu corrección de frecuencia (p. ej. «viernes a las 21:30») pasa a las fases nuevas del mismo tipo (semanal con semanal…).
+      const fo = { ...(o.freqOverrides || {}) };
+      for (const [txt, ov] of Object.entries(o.freqOverrides || {})) {
+        const kind = parseFrequency(txt).kind;
+        for (const f of np.phases || []) if (!(f.frequency in fo) && parseFrequency(f.frequency).kind === kind) fo[f.frequency] = ov;
+      }
+      await this.updatePlan(profileId, np.id, { pauses: pausesOf(o), guideNotes: o.guideNotes || [], trackFrom: o.trackFrom || '', freqOverrides: fo });
+    }
+    for (const id of new Set([...closeIds, ...moved])) await this.updatePlan(profileId, id, { closed: true, notes: [olds.find((o) => o.id === id)?.notes, `Sustituido por «${t.name}» el ${esD(today)}`].filter(Boolean).join('\n') });
+    return created.map((x) => x.id);
+  }
+
   async markReviewDone(profileId, planId, date) {
     const p = await this.store.get('plans', planId);
     must(p && p.profileId === profileId, 'Plan inexistente o de otro perfil');
@@ -523,15 +555,16 @@ export class Model {
         if (p.alerts.d0 && left === 0) push('aviso', `${END_ALERT_TEXT} (termina hoy)`, p.id);
         if (p.alerts.overdue && left < 0) push('seguridad', `Fecha final vencida el ${end} en «${p.name || 'plan'}». Revisa el plan.`, p.id);
       }
-      if (p.mode === 'continuo' && p.reviewEveryDays > 0 && !p.closed) {
-        const n = Math.floor(diffDays(p.start, t) / p.reviewEveryDays);
-        const next = addDays(p.start, (n + 1) * p.reviewEveryDays);
-        const last = n > 0 ? addDays(p.start, n * p.reviewEveryDays) : null;
+      // Revisión periódica en cualquier plan; los días en pausa no cuentan.
+      if (p.reviewEveryDays > 0 && !p.closed && p.start <= t && (!end || t <= end)) {
+        const n = Math.floor(activeDay(p, t) / p.reviewEveryDays);
+        const next = dateOfActiveDay(p, (n + 1) * p.reviewEveryDays);
+        const last = n > 0 ? dateOfActiveDay(p, n * p.reviewEveryDays) : null;
         const done = (p.reviewsDone || []).includes(last);
         if (last && !done) push('aviso', `Revisión periódica vencida (${last}) en «${p.name || 'seguimiento continuo'}»`, p.id);
         else if (diffDays(t, next) <= 2) push('info', `Próxima revisión periódica: ${next}`, p.id);
       }
-      for (const d of REVIEW_DAYS) if (addDays(p.start, d) === t) push('info', `Revisión de ${d} días disponible para «${p.name || 'plan'}»`, p.id);
+      for (const d of REVIEW_DAYS) if (dateOfActiveDay(p, d) === t) push('info', `Revisión de ${d} días disponible para «${p.name || 'plan'}»`, p.id);
     }
     for (const a of await this.list('administrations', profileId)) {
       if (a.status === 'pendiente' && a.date <= t) push('aviso', `Registro pendiente de confirmar: ${a.date} ${a.time}`, a.id);
@@ -566,8 +599,8 @@ export class Model {
         add(x.from, 'descanso', `Pausa: ${p.name || PLAN_MODES[p.mode]}`, p.id);
         if (x.to) add(addDays(x.to, 1), 'ciclo', `Reanuda: ${p.name || PLAN_MODES[p.mode]}`, p.id);
       }
-      for (const d of REVIEW_DAYS) add(addDays(p.start, d), 'revision', `Revisión ${d} días`, p.id);
-      if (p.reviewEveryDays > 0) for (let k = 1; addDays(p.start, k * p.reviewEveryDays) <= to; k++) add(addDays(p.start, k * p.reviewEveryDays), 'revision', 'Revisión periódica', p.id);
+      for (const d of REVIEW_DAYS) add(dateOfActiveDay(p, d), 'revision', `Revisión ${d} días`, p.id);
+      if (p.reviewEveryDays > 0) for (let k = 1, x; (x = dateOfActiveDay(p, k * p.reviewEveryDays)) <= to && (!end || x <= end); k++) add(x, 'revision', 'Revisión periódica', p.id);
     }
     for (const x of await this.list('pct', profileId)) {
       if (x.reviewDate) add(x.reviewDate, 'pct', 'Revisión postciclo', x.id);
@@ -582,6 +615,11 @@ export class Model {
         if (w.count >= w.needed) continue;
         if (d === w.weekStart && w.weekEnd >= t) add(d, 'prevista', `${await label(w.plan)} ${amountText(w.phase)} · ${w.needed} esta semana (${w.count} hechas)`, w.plan.id);
         if (d === w.weekEnd && d < t && !(w.plan.trackFrom > d)) add(d, 'sinregistro', `${await label(w.plan)}: ${w.count} de ${w.needed} esa semana`, w.plan.id);
+      }
+      for (const x of ag.interval) {
+        if (x.today.length) continue;
+        if (d === x.from && d >= t) add(d, 'prevista', `${await label(x.plan)} ${amountText(x.phase)} · entre el ${esD(x.from)} y el ${esD(x.to)}`.trim(), x.plan.id);
+        if (d === x.to && d < t && !(x.plan.trackFrom > d)) add(d, 'sinregistro', `${await label(x.plan)}: sin toma entre el ${esD(x.from)} y el ${esD(x.to)}`, x.plan.id);
       }
     }
     for (const w of await this.list('weights', profileId)) add(w.date, 'peso', `${w.kg} kg`, w.id);
@@ -632,14 +670,15 @@ export class Model {
     if (plan) must(plan.profileId === profileId, 'El plan pertenece a otro perfil');
     const s = start || plan?.start;
     must(isDate(s), 'Falta la fecha de inicio del periodo');
-    const end = addDays(s, days);
+    const end = plan && !start ? dateOfActiveDay(plan, days) : addDays(s, days); // días activos: las pausas no cuentan
     const weights = (await this.weights(profileId)).filter((w) => w.date <= end);
     const before = weights.filter((w) => w.date <= s);
     const initial = before.length ? before[before.length - 1].kg : (weights[0]?.kg ?? profile.initialWeight ?? null);
     const inWin = weights.filter((w) => w.date > s);
     const current = inWin.length ? inWin[inWin.length - 1].kg : null;
     const change = initial != null && current != null ? weightChange(initial, current) : null;
-    const admins = (await this.list('administrations', profileId)).filter((a) => a.date >= s && a.date <= end && (!planId || a.planId === planId))
+    // Tomas del plan, también las anotadas sin plan de la misma presentación; fechadas por la toma prevista que cubren.
+    const admins = (await this.list('administrations', profileId)).filter((a) => when(a) >= s && when(a) <= end && (!plan || belongsTo(a, plan)))
       .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
     const count = (st) => admins.filter((a) => a.status === st).length;
     const habits = (await this.list('habits', profileId)).filter((h) => h.date >= s && h.date <= end);
@@ -650,11 +689,12 @@ export class Model {
     if (!admins.length) missing.push('Registros de administración');
     if (admins.some((a) => a.amount == null && a.status === 'realizado')) missing.push('Cantidad en algún registro realizado');
     if (!habits.length) missing.push('Hábitos');
-    const nextReview = REVIEW_DAYS.map((d) => addDays(s, d)).find((d) => d > this.today()) || null;
+    const nextReview = REVIEW_DAYS.map((d) => (plan && !start ? dateOfActiveDay(plan, d) : addDays(s, d))).find((d) => d > this.today()) || null;
+    const feel = Object.fromEntries(Object.keys(FEEL).map((k) => [k, admins.filter((a) => a.feel === k).length]));
     return { profile: profile.name, start: s, end, days, initial, current, change, admins,
       counts: { realizado: count('realizado'), omitido: count('omitido'), retrasado: count('retrasado'), cancelado: count('cancelado'), pendiente: count('pendiente') },
       symptoms: admins.filter((a) => a.symptoms || a.adverse).map((a) => ({ date: a.date, symptoms: a.symptoms, adverse: a.adverse })),
-      incidents, habits, missing, nextReview,
+      incidents, habits, missing, nextReview, feel,
       disclaimer: 'Resumen de datos registrados. No indica si hay que aumentar, reducir, interrumpir o continuar nada; esa decisión corresponde a un profesional sanitario.' };
   }
 
@@ -774,7 +814,7 @@ export class Model {
       const notes = [t.route && `Vía: ${t.route}`, t.durationText && `Duración del protocolo: ${t.durationText}`, t.restText && `Descanso / después: ${t.restText}`, it.notes, t.notes].filter(Boolean).join('\n');
       out.push(await this.addPlan(profileId, { name: t.items.length > 1 ? `${t.name} — ${it.substance}` : t.name, productId: products[i] ?? it.productId ?? '',
         mode: dur ? 'duracion' : 'pendiente', substance: it.substance, start: d.start, duration: dur, durationUnit: unit, phases: it.phases,
-        source: `Biblioteca: ${t.name}${t.source ? ' · ' + t.source : ''}`, enteredBy: 'Biblioteca de protocolos', templateId: t.id, notes }));
+        source: `Biblioteca: ${t.name}${t.source ? ' · ' + t.source : ''}`, enteredBy: 'Biblioteca de protocolos', templateId: t.id, notes, ficha: it.ficha || '' }));
     }
     return out;
   }
@@ -810,7 +850,7 @@ export function validateLibrary(data) {
     const items = [];
     for (const it of t.items) {
       if (!it.substance) errors.push(`${where}: sustancia sin nombre`);
-      try { items.push({ substance: it.substance || '', productId: it.productId || '', notes: it.notes || '', phases: parsePhases(it.phases || []) }); }
+      try { items.push({ substance: it.substance || '', productId: it.productId || '', notes: it.notes || '', phases: parsePhases(it.phases || []), ficha: it.ficha ? String(it.ficha) : '' }); }
       catch (e) { errors.push(`${where} · ${it.substance}: ${e.message}`); }
     }
     templates.push({ id: t.id, name: t.name, compound: t.compound || '', sex: t.sex, kind: t.items.length > 1 ? 'combinado' : 'sustancia', route: t.route || '',

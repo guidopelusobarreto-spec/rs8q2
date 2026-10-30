@@ -29,7 +29,7 @@ const ROUTES = {
   protocolos: H.protocolos, ficha: H.ficha, texto: H.texto, mas: H.mas, acerca: H.acerca,
 };
 
-export const APP_VERSION = 'v15 · 30-oct-2026'; // subir junto con CACHE en sw.js
+export const APP_VERSION = 'v16 · 30-oct-2026'; // subir junto con CACHE en sw.js
 export const ctx = { store: null, model: null, profileId: null, ui: null, locked: false, lastActive: Date.now() };
 
 async function loadUI() {

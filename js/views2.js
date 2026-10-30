@@ -1,8 +1,8 @@
 // Calendario, ciclos, postciclo, recordatorios, peso, hábitos, informes, incidencias y ajustes.
 import { esc, $, $$, opt, field, inp, toast, dialog, fmtDate, fmtNum, readForm, showErr, download, lineChart } from './ui.js';
-import { parseImportText, importPlans, parsePhaseLine, phaseText, PLAN_MODES, PCT_STATUS, PCT_UNDEFINED, REVIEW_DAYS, ADMIN_STATUS, planEnd, planBaseEnd, pausesOf, hasOpenPause, runSiblings, addDays, diffDays, todayISO, weightChange, toISODate } from './model.js';
+import { parseImportText, importPlans, parsePhaseLine, phaseText, PLAN_MODES, PCT_STATUS, PCT_UNDEFINED, REVIEW_DAYS, ADMIN_STATUS, FEEL, activeDay, dateOfActiveDay, planEnd, planBaseEnd, pausesOf, hasOpenPause, runSiblings, addDays, diffDays, todayISO, weightChange, toISODate } from './model.js';
 import { pauseText, pauseDialog, resumeDialog, removePauseDialog, editPauseDialog } from './pausas.js';
-import { notesList, noteDialog, feelTable, adjustDialog, startDialog, backfillDialog, guideContext, guideHTML } from './ajustes.js';
+import { notesList, noteDialog, feelTable, adjustDialog, startDialog, backfillDialog, guideContext, guideHTML, switchDialog } from './ajustes.js';
 import { COLLECTIONS } from './store.js';
 import { WHO_ACTIVITY, EMERGENCY } from './safety.js';
 import { productOptions, alertBox, dehydration, DEHYDRATION_TEXT, ruoBadge } from './views1.js';
@@ -119,8 +119,9 @@ export async function planDetalle(view, r, ctx) {
     ${pauses.length ? `<ul class="plain">${pauses.map((x) => `<li><strong>${esc(pauseText(x))}</strong>${x.note ? `<br><span class="small">${esc(x.note)}</span>` : ''}
       <div class="row noprint" style="margin-top:.3rem">${x.to ? '' : `<button class="ok slim" data-resume="${x.id}">Reanudar</button>`}<button class="sec slim" data-pedit="${x.id}">Editar</button><button class="ghost slim" data-unpause="${x.id}">Borrar</button></div></li>`).join('')}</ul>` : '<p class="muted">Sin pausas.</p>'}
     ${p.closed || hasOpenPause(p) ? '' : `<div class="row noprint"><button id="pause" class="sec">${sibs.length > 1 ? 'Pausar el protocolo' : 'Pausar'}</button></div>`}</div>`;
-  const nextReview = p.reviewEveryDays > 0 ? addDays(p.start, (Math.floor(diffDays(p.start, t) / p.reviewEveryDays) + 1) * p.reviewEveryDays) : null;
-  const lastReview = p.reviewEveryDays > 0 && diffDays(p.start, t) >= p.reviewEveryDays ? addDays(p.start, Math.floor(diffDays(p.start, t) / p.reviewEveryDays) * p.reviewEveryDays) : null;
+  const act = p.start <= t ? activeDay(p, t) : -1; // días activos (las pausas no cuentan)
+  const nextReview = p.reviewEveryDays > 0 ? dateOfActiveDay(p, (Math.floor(Math.max(act, 0) / p.reviewEveryDays) + 1) * p.reviewEveryDays) : null;
+  const lastReview = p.reviewEveryDays > 0 && act >= p.reviewEveryDays ? dateOfActiveDay(p, Math.floor(act / p.reviewEveryDays) * p.reviewEveryDays) : null;
   view.innerHTML = `<p><a href="#/planes">← Ciclos y periodos</a></p><h1>${esc(p.name || PLAN_MODES[p.mode])}</h1>
     ${prod?.research ? `<div class="ruo-banner">${esc(prod.substance)}: sustancia de investigación. Este seguimiento no es un protocolo validado.</div>` : ''}
     ${p.mode === 'continuo' ? '<div class="alert info">El seguimiento continuo organiza revisiones; no es una recomendación para continuar ninguna sustancia indefinidamente.</div>' : ''}
@@ -138,7 +139,7 @@ export async function planDetalle(view, r, ctx) {
       <dt>Fuente</dt><dd>${esc(p.source || '—')}</dd><dt>Introducido por</dt><dd>${esc(p.enteredBy || '—')}</dd><dt>Registrado</dt><dd>${new Date(p.createdAt).toLocaleString('es-ES')}</dd></dl>
       <div class="row noprint" style="margin-top:.6rem"><button id="edit" class="sec">Editar</button>${lastReview ? `<button id="rev" class="sec">Marcar revisión del ${fmtDate(lastReview)} como hecha</button>` : ''}<button id="close" class="sec">${p.closed ? 'Reabrir' : 'Cerrar plan'}</button>
       <a class="btn sec" href="#/pct?ciclo=${p.id}">Seguimiento postciclo</a>
-      <button id="startBtn" class="sec">Fecha de inicio${sibs.length > 1 ? ' del protocolo' : ''}</button>${p.start < t ? '<button id="backBtn" class="sec">Días anteriores</button>' : ''}</div>
+      <button id="startBtn" class="sec">Fecha de inicio${sibs.length > 1 ? ' del protocolo' : ''}</button>${p.start < t ? '<button id="backBtn" class="sec">Días anteriores</button>' : ''}${p.closed ? '' : '<button id="switchBtn" class="sec">Cambiar de protocolo</button>'}</div>
       ${p.trackFrom ? `<p class="small">El cumplimiento cuenta desde el ${fmtDate(p.trackFrom)}.</p>` : ''}
       ${p.history?.length ? `<details><summary>Historial de modificaciones (${p.history.length})</summary><ul class="small">${p.history.map((h) => `<li>${new Date(h.at).toLocaleString('es-ES')}: ${h.changes.map((c) => esc(c.field)).join(', ')}</li>`).join('')}</ul></details>` : ''}</div>
     ${protoHTML ? `<div class="card" id="protocolo"><h2 style="margin-top:0">Tu protocolo (guía)</h2>${protoHTML}</div>` : ''}
@@ -150,7 +151,7 @@ export async function planDetalle(view, r, ctx) {
       ${(() => { const ad = adherence(p, admins, t); return `<p>Cumplimiento hasta hoy: <strong>${ad.pct == null ? '—' : `${ad.done} de ${ad.expected} (${ad.pct} %)`}</strong></p>`; })()}
       <ul class="plain">${p.phases.map((f, i) => { const sc = scheduleFor(p, f); return `<li><strong>${esc(phaseText(f))}</strong><br><span class="small">Se entiende: ${esc(scheduleText(sc))}${sc.overridden ? ' (corregido por ti)' : ''}${sc.notes.length ? ` · ${esc(sc.notes.join(' · '))}` : ''}</span>
         <div class="row noprint" style="margin-top:.3rem"><button class="sec slim" data-adj="${i}">Cambiar cantidad</button><button class="sec slim" data-freq="${i}">Corregir frecuencia</button></div></li>`; }).join('')}</ul></div>` : ''}
-    <div class="card"><h2 style="margin-top:0">Revisiones</h2><div class="row">${REVIEW_DAYS.map((d) => `<a class="btn ${days === d ? '' : 'sec'}" href="#/plan/${p.id}?dias=${d}">${d} días (${fmtDate(addDays(p.start, d))})</a>`).join('')}</div>
+    <div class="card"><h2 style="margin-top:0">Revisiones</h2><div class="row">${REVIEW_DAYS.map((d) => `<a class="btn ${days === d ? '' : 'sec'}" href="#/plan/${p.id}?dias=${d}">${d} días (${fmtDate(dateOfActiveDay(p, d))})</a>`).join('')}</div>
       ${rep ? reportHTML(rep, products) : '<p class="muted">Elige una revisión para ver el informe.</p>'}</div>`;
   $('#edit').addEventListener('click', async () => {
     const ok = await dialog(`<form><h2>Editar plan</h2>${planForm(products, p)}<div class="row"><button>Guardar</button><button type="button" class="sec" data-close>Cancelar</button></div></form>`, {
@@ -170,6 +171,7 @@ export async function planDetalle(view, r, ctx) {
   }));
   $$('[data-adj]').forEach((b) => b.addEventListener('click', async () => { if (await adjustDialog(ctx, p, p.phases[b.dataset.adj])) { toast('Cantidad cambiada'); again(); } }));
   $('#startBtn').addEventListener('click', async () => { if (await startDialog(ctx, sibs, labelOf)) again(); });
+  $('#switchBtn')?.addEventListener('click', async () => { const ids = await switchDialog(ctx, sibs, labelOf); if (ids) location.hash = '#/protocolos'; });
   $('#backBtn')?.addEventListener('click', async () => { if (await backfillDialog(ctx, sibs)) again(); });
   $$('[data-unpause]').forEach((b) => b.addEventListener('click', async () => { if (await removePauseDialog(ctx, sibs, pauses.find((x) => x.id === b.dataset.unpause), labelOf)) again(); }));
   $$('[data-freq]').forEach((btn) => btn.addEventListener('click', async () => {
@@ -178,7 +180,7 @@ export async function planDetalle(view, r, ctx) {
       ${field('Tipo', `<select name="kind">${Object.entries(KINDS).map(([k, v]) => opt(k, v, sc.kind)).join('')}</select>`)}
       <fieldset><legend>Días (si son días concretos)</legend><div class="row">${[1, 2, 3, 4, 5, 6, 0].map((d) => `<label class="check"><input type="checkbox" name="days" value="${d}" data-multi ${sc.days.includes(d) ? 'checked' : ''}>${DAY_NAMES[d].slice(0, 3)}</label>`).join('')}</div></fieldset>
       <div class="grid">${field('Veces al día', inp('perDay', sc.perDay || 1, 'type="number" min="1" max="12"'))}${field('Veces por semana', inp('perWeek', sc.perWeek ?? '', 'type="number" min="1" max="21"'))}
-      ${field('Cada N días', inp('everyN', sc.everyN ?? '', 'type="number" min="1"'))}${field('Momento', `<select name="moment"><option value="">—</option>${Object.entries(MOMENTS).map(([k, v]) => opt(k, v.label, sc.moments[0])).join('')}</select>`)}</div>
+      ${field('Cada N días', inp('everyN', sc.everyN ?? '', 'type="number" min="1"'))}${field('Hasta M días (solo «cada N a M días»)', inp('everyMax', sc.everyMax ?? '', 'type="number" min="1"'))}${field('Momento', `<select name="moment"><option value="">—</option>${Object.entries(MOMENTS).map(([k, v]) => opt(k, v.label, sc.moments[0])).join('')}</select>`)}</div>
       ${field('Horas fijas (HH:MM, separadas por comas)', inp('times', sc.times.join(', ')))}
       <input type="hidden" name="reset" value="">
       <div class="row"><button>Guardar</button><button type="button" class="ghost" id="fReset">Lectura automática</button><button type="button" class="ghost" data-close>Cancelar</button></div></form>`, {
@@ -190,8 +192,9 @@ export async function planDetalle(view, r, ctx) {
         const days = (d.days || []).map(Number);
         if (d.kind === 'days' && !days.length) throw new Error('Marca al menos un día');
         if (d.kind === 'weekly' && !(Number(d.perWeek) > 0)) throw new Error('Indica cuántas veces por semana');
-        if (d.kind === 'everyN' && !(Number(d.everyN) > 0)) throw new Error('Indica cada cuántos días');
-        return m.setFrequency(ctx.profileId, p.id, f.frequency, { kind: d.kind, days, perDay: Number(d.perDay) || 1, perWeek: Number(d.perWeek) || null, everyN: Number(d.everyN) || null, times, moments: d.moment ? [d.moment] : [], maxPerWeek: sc.maxPerWeek });
+        if ((d.kind === 'everyN' || d.kind === 'interval') && !(Number(d.everyN) > 0)) throw new Error('Indica cada cuántos días');
+        if (d.kind === 'interval' && Number(d.everyMax) < Number(d.everyN)) throw new Error('«Hasta M días» debe ser igual o mayor que N');
+        return m.setFrequency(ctx.profileId, p.id, f.frequency, { kind: d.kind, days, perDay: Number(d.perDay) || 1, perWeek: Number(d.perWeek) || null, everyN: Number(d.everyN) || null, everyMax: Number(d.everyMax) || null, perDayMax: sc.perDayMax ?? null, times, moments: d.moment ? [d.moment] : [], maxPerWeek: sc.maxPerWeek });
       },
     });
     if (ok) { toast('Frecuencia guardada'); planDetalle(view, r, ctx); }
@@ -206,8 +209,10 @@ export function reportHTML(rep, products) {
       <dt>Diferencia</dt><dd>${rep.change ? `${rep.change.kg > 0 ? '+' : ''}${fmtNum(rep.change.kg)} kg (${rep.change.pct > 0 ? '+' : ''}${fmtNum(rep.change.pct)} %)` : '—'}</dd>
       <dt>Registros</dt><dd>${Object.entries(rep.counts).map(([k, n]) => `${ADMIN_STATUS[k]}: ${n}`).join(' · ')}</dd>
       <dt>Siguiente revisión</dt><dd>${rep.nextReview ? fmtDate(rep.nextReview) : '—'}</dd>
-      <dt>Datos que faltan</dt><dd>${rep.missing.length ? esc(rep.missing.join(', ')) : 'Ninguno'}</dd></dl>
-    <h3>Cantidades registradas</h3>${rep.admins.length ? `<div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Sustancia</th><th>Cantidad</th><th>Estado</th></tr></thead><tbody>${rep.admins.map((a) => `<tr><td>${fmtDate(a.date)} ${a.time}</td><td>${esc(pn(a.productId))}</td><td>${a.amount != null ? `${fmtNum(a.amount, 4)} ${esc(a.unit)}` : '—'}</td><td>${ADMIN_STATUS[a.status]}</td></tr>`).join('')}</tbody></table></div>` : '<p class="muted">Sin registros.</p>'}
+      <dt>Datos que faltan</dt><dd>${rep.missing.length ? esc(rep.missing.join(', ')) : 'Ninguno'}</dd>
+      <dt>Cómo te sentó</dt><dd>${Object.entries(rep.feel || {}).map(([k, n]) => `${esc(FEEL[k])}: ${n}`).join(' · ') || '—'}</dd></dl>
+    <h3>Cantidades registradas</h3>${rep.admins.length ? `<div class="table-wrap"><table><thead><tr><th>Fecha</th><th>Sustancia</th><th>Cantidad</th><th>Estado</th><th>Cómo sentó</th></tr></thead><tbody>${rep.admins.map((a) => `<tr><td>${fmtDate(a.date)} ${a.time}${a.forDate ? `<br><span class="small">(prevista del ${fmtDate(a.forDate)})</span>` : ''}</td><td>${esc(pn(a.productId))}</td><td>${a.amount != null ? `${fmtNum(a.amount, 4)} ${esc(a.unit)}` : '—'}</td><td>${ADMIN_STATUS[a.status]}</td><td>${a.feel ? esc(FEEL[a.feel]) : '—'}</td></tr>`).join('')}</tbody></table></div>
+    <h3>Cómo te sienta cada cantidad</h3>${feelTable(rep.admins)}` : '<p class="muted">Sin registros.</p>'}
     <h3>Síntomas y efectos adversos</h3>${rep.symptoms.length ? `<ul>${rep.symptoms.map((s) => `<li>${fmtDate(s.date)}: ${esc([s.symptoms, s.adverse].filter(Boolean).join(' · '))}</li>`).join('')}</ul>` : '<p class="muted">Ninguno registrado.</p>'}
     <h3>Incidencias</h3>${rep.incidents.length ? `<ul>${rep.incidents.map((i) => `<li>${esc(i.label)} (${esc(i.status)})</li>`).join('')}</ul>` : '<p class="muted">Ninguna.</p>'}
     <h3>Hábitos registrados</h3><p>${rep.habits.length ? Object.entries(rep.habits.reduce((o, h) => ((o[h.type] = (o[h.type] || 0) + 1), o), {})).map(([k, n]) => `${esc(k)}: ${n}`).join(' · ') : '<span class="muted">Ninguno.</span>'}</p>

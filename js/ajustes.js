@@ -126,7 +126,7 @@ export function protocolFicha(info, plan, sex = '') {
   const s = subs.find((x) => plan.substance && x.nombre === plan.substance) || subs.find((x) => plan.productId && (x.productIds || []).includes(plan.productId));
   if (!s?.texto) return null;
   const fichas = splitFichas(s.texto), head = (f) => f.split('\n')[0];
-  const n = (plan.source || '').match(/ficha (\d+)/)?.[1];
+  const n = plan.ficha || (plan.source || '').match(/ficha (\d+)/)?.[1]; // la ficha del propio plan (combinados) o la del modelo
   const pick = (n && fichas.find((f) => f.startsWith(n + '. '))) || (sex === 'mujer' && fichas.find((f) => /mujer/i.test(head(f))))
     || (sex === 'hombre' && fichas.find((f) => /hombre/i.test(head(f)))) || fichas[0];
   return { key: s.key, text: pick };
@@ -156,4 +156,32 @@ export function guideHTML(g, { open = false } = {}) {
   return `<details class="proto"${open ? ' open' : ''}><summary>Tu protocolo · ${cleanInline(f.title)}</summary>
     ${parts.map((x) => `<p><strong>${cleanInline(x.key)}:</strong> ${cleanInline(x.value)}</p>${items(x)}`).join('')}
     <p class="small"><a href="#/ficha/${esc(g.key)}">Ver la ficha completa</a> · Es tu texto. Las cantidades que registras o ajustas son tuyas.</p></details>`;
+}
+
+// ── Cambiar de protocolo conservando las semanas que llevas y tus tomas ──
+export async function switchDialog(ctx, plans, labelOf = (p) => p.name || 'plan') {
+  const tpls = (await ctx.model.templates()).filter((t) => !t.blocked);
+  if (!tpls.length) { toast('Carga primero tu biblioteca en Protocolos → Biblioteca'); return false; }
+  const start = plans.map((p) => p.start).sort()[0];
+  let ids = null;
+  const ok = await dialog(`<form><h2>Cambiar de protocolo</h2>
+    <p class="small">El protocolo nuevo empieza en la misma fecha, así que <strong>las semanas que llevas cuentan</strong>. Las tomas, pausas y notas de cada sustancia pasan al plan nuevo de esa misma sustancia. Las sustancias que no siguen se cierran (quedan en el historial).</p>
+    ${field('Protocolo nuevo', `<select name="tpl" required><option value="">— Elige —</option>${tpls.map((t) => opt(t.id, `${t.name}${t.sex && t.sex !== 'ambos' ? ` (${t.sex})` : ''}`, '')).join('')}</select>`, true)}
+    <div class="grid">${field('Fecha de inicio (la del ciclo actual)', inp('start', start, 'type="date" required'), true)}${field('Duración en semanas (vacío = sin fin)', inp('duration', '', 'type="number" min="1"'))}</div>
+    <fieldset><legend>¿Qué cierro del protocolo actual?</legend>
+      ${plans.map((p) => `<label class="check"><input type="checkbox" name="close" value="${p.id}" data-multi checked>${esc(labelOf(p))}</label>`).join('')}
+      <p class="small muted">Desmarca lo que quieras seguir tomando como está. Si una sustancia sigue en el protocolo nuevo, su plan antiguo se cierra siempre y sus tomas pasan al nuevo.</p></fieldset>
+    <div class="row"><button>Cambiar</button><button type="button" class="ghost" data-close>Cancelar</button></div></form>`, {
+    onSubmit: async (d) => {
+      if (!d.tpl) throw new Error('Elige el protocolo nuevo');
+      const t = tpls.find((x) => x.id === d.tpl);
+      const warns = await ctx.model.compatCheck(ctx.profileId, { items: t.items.map((it) => ({ productId: it.productId, text: it.substance, label: it.substance })), from: d.start, to: null, excludePlanIds: plans.map((p) => p.id) });
+      if (warns.length && !(await (await import('./views3.js')).confirmCompat(warns))) return false; // import al usarlo: evita cargar la interfaz en las pruebas
+      ids = await ctx.model.switchProtocol(ctx.profileId, plans.map((p) => p.id), d.tpl, { start: d.start, duration: d.duration, closeIds: d.close || [] });
+      return true;
+    },
+  });
+  if (!ok) return false;
+  toast(`Protocolo cambiado: ${ids.length} plan(es) nuevos`);
+  return ids;
 }

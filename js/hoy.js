@@ -2,7 +2,7 @@
 import { esc, $, $$, toast, dialog, fmtDate, field, inp } from './ui.js';
 import { todayISO, planEnd, planBaseEnd, diffDays, addDays, planWeek, pausedOn, pausesOf, notesFor } from './model.js';
 import { pauseText, pauseDialog, resumeDialog } from './pausas.js';
-import { feelChip, feelDialog, guideBox, startDialog, guideContext, guideHTML } from './ajustes.js';
+import { feelChip, feelDialog, guideBox, startDialog, guideContext, guideHTML, switchDialog } from './ajustes.js';
 import { MOMENTS, scheduleText, amountText, adherence, totalWeeks, substanceWeek, substanceWeekText } from './schedule.js';
 import { fmtDoc, fichaHTML, splitFichas, cleanInline } from './text.js';
 import { productOptions, exceedFlow } from './views1.js';
@@ -116,16 +116,26 @@ export async function hoy(view, r, ctx) {
       ${wk(d.plan)}${freqLine(d.phase, d.sched)}${guideBox(notesFor(d.plan, date))}${proto(d.plan)}<p class="freq">Esta semana: <strong>${d.count}</strong>${max ? ` (tu máximo: ${max})` : ''}${d.today.length ? ` · hoy a las ${esc(d.today.map((a) => a.time).join(', '))}` : ''}</p>
       <div class="acts"><button class="sec" data-do="demand" data-i="${i}">Registrar toma</button></div></div>`;
   }).join('');
+  // Cada N a M días: ventana desde tu última toma.
+  const interval = ag.interval.map((x, i) => {
+    const label = L(x.plan), a = x.today[x.today.length - 1];
+    return `<div class="dose ${a ? 'done' : ''}" style="--h:${hueFor(label)}"><div class="top"><span class="name">${esc(label)}</span><span class="amt">${esc(amountText(x.phase) || '—')}</span></div>
+      ${wk(x.plan)}${freqLine(x.phase, x.sched)}${guideBox(notesFor(x.plan, date))}${proto(x.plan)}
+      <p class="freq">${x.last ? `Última: ${esc(fmtDate(x.last.forDate || x.last.date))} · ` : ''}${x.from === x.to ? `Toca desde el ${esc(fmtDate(x.from))}` : `Toca entre el ${esc(fmtDate(x.from))} y el ${esc(fmtDate(x.to))}`}</p>
+      ${x.late ? '<p><span class="chip warn">Pasado el plazo de tu texto</span></p>' : ''}
+      <div class="acts">${a ? `<span><span class="chip ok">✓ Hecho a las ${esc(a.time)}</span>${otherAmt(a, x.phase)}${feelChip(a)}</span>${feelBtn(a)}<button class="link" data-undo="${a.id}">Deshacer</button>`
+        : `<button class="ok" data-do="idone" data-i="${i}">Hecho</button><button class="ghost" data-do="iother" data-i="${i}">Otro día o cantidad</button>`}</div></div>`;
+  }).join('');
   const unknown = ag.unknown.map((u) => `<div class="dose" style="--h:${hueFor(L(u.plan))}"><div class="top"><span class="name">${esc(L(u.plan))}</span><span class="amt">${esc(amountText(u.phase))}</span></div>
       <p class="freq">«${esc(u.phase.frequency || 'sin frecuencia')}»: no sé qué días toca.</p><p><a href="#/plan/${u.plan.id}">Indicar la frecuencia en el plan</a></p></div>`).join('');
   const pausedHTML = paused.map((g, i) => `<div class="dose paused"><div class="top"><span class="name">${esc(g.plans.length > 1 ? g.run.name : L(g.plans[0]))}</span><span class="chip">En pausa</span></div>
       <p class="freq">${esc(pauseText(g.pause))}${g.pause.note ? ` · ${esc(g.pause.note)}` : ''}</p>${g.plans.length > 1 ? `<p class="freq">${g.plans.map((p) => esc(L(p))).join(', ')}</p>` : ''}
       ${guideBox([...new Map(g.plans.flatMap((p) => notesFor(p, date)).map((n) => [n.text, n])).values()])}
       <div class="acts">${!g.pause.to && date === t ? `<button class="ok" data-do="resume" data-i="${i}">Reanudar hoy</button>` : ''}<a class="btn sec" href="#/plan/${g.plans[0].id}">Ver el plan</a></div></div>`).join('');
-  const nothing = !ag.slots.length && !ag.weekly.length && !ag.demand.length && !ag.unknown.length && !paused.length;
+  const nothing = !ag.slots.length && !ag.weekly.length && !ag.demand.length && !ag.interval.length && !ag.unknown.length && !paused.length;
   view.innerHTML = head + runsHTML + (pausedHTML ? `<h2 class="grp">En pausa</h2>${pausedHTML}` : '') + (nothing ? `<div class="card empty"><p>Nada previsto ${date === t ? 'hoy' : 'este día'}.</p><p><a href="#/biblioteca">Aplicar un protocolo</a> · <a href="#/registro">Registrar una toma suelta</a></p></div>` : '')
     + groups.map(([l, a]) => `<h2 class="grp">${esc(l)}</h2>${a.map(card).join('')}`).join('')
-    + (weekly ? `<h2 class="grp">Esta semana</h2>${weekly}` : '') + (demand ? `<h2 class="grp">A demanda</h2>${demand}` : '') + (unknown ? `<h2 class="grp">Revisar</h2>${unknown}` : '')
+    + (weekly ? `<h2 class="grp">Esta semana</h2>${weekly}` : '') + (interval ? `<h2 class="grp">Cada varios días</h2>${interval}` : '') + (demand ? `<h2 class="grp">A demanda</h2>${demand}` : '') + (unknown ? `<h2 class="grp">Revisar</h2>${unknown}` : '')
     + '<p class="noprint" style="margin-top:1.2rem"><a class="btn sec" href="#/registro">＋ Registrar una toma suelta</a></p>';
   const again = () => hoy(view, r, ctx);
   const slot = (k) => ag.slots.find((s) => s.key === k);
@@ -135,7 +145,7 @@ export async function hoy(view, r, ctx) {
     b.disabled = true;
     try {
       if (b.dataset.feel) {
-        const a = [...ag.slots.map((x) => x.admin), ...ag.weekly.flatMap((x) => x.today)].find((x) => x?.id === b.dataset.feel);
+        const a = [...ag.slots.map((x) => x.admin), ...ag.weekly.flatMap((x) => x.today), ...ag.interval.flatMap((x) => x.today)].find((x) => x?.id === b.dataset.feel);
         if (a && (await feelDialog(ctx, a))) toast('Guardado');
         return again();
       }
@@ -150,8 +160,8 @@ export async function hoy(view, r, ctx) {
         if (res?.min) { await m.snooze(pid, b.dataset.k, Number(res.min)); toast('Pospuesta'); }
         return again();
       }
-      const other = d === 'other' || d === 'wother';
-      const it = d === 'wdone' || d === 'wother' ? ag.weekly[b.dataset.i] : d === 'demand' ? ag.demand[b.dataset.i] : slot(b.dataset.k);
+      const other = d === 'other' || d === 'wother' || d === 'iother';
+      const it = d === 'wdone' || d === 'wother' ? ag.weekly[b.dataset.i] : d === 'idone' || d === 'iother' ? ag.interval[b.dataset.i] : d === 'demand' ? ag.demand[b.dataset.i] : slot(b.dataset.k);
       const s = it.sched, ph = it.phase;
       const time = at || it.time || MOMENTS[it.moment]?.at || '12:00';
       let amount = ph.amountMax == null ? ph.amount : null;
@@ -220,12 +230,13 @@ export async function protocolos(view, r, ctx) {
       <div class="table-wrap"><table class="crono"><thead><tr><th class="sub">Semana</th>${Array.from({ length: weeks }, (_, i) => `<th class="${i + 1 === now ? 'now' : ''}">${i + 1}</th>`).join('')}<th title="Tomas hechas frente a previstas hasta hoy">Cumpl.</th></tr></thead><tbody>${rows}</tbody></table></div>
       <p class="small muted">Cumplimiento: tomas registradas como hechas frente a las previstas por tus fases hasta hoy.${pz.length ? ' Las semanas cuentan solo días activos.' : ''}</p>
       ${pz.length ? `<p class="small"><strong>Pausas:</strong> ${pz.map((z) => esc(pauseText(z))).join(' · ')}</p>` : ''}
-      ${finished ? '' : `<div class="row noprint">${open ? `<button class="ok slim" data-resume-run="${i}">Reanudar</button>` : `<button class="sec slim" data-pause-run="${i}">${x.plans.length > 1 ? 'Pausar el protocolo' : 'Pausar'}</button>`}<button class="sec slim" data-start-run="${i}">Fecha de inicio</button></div>`}</div>`;
+      ${finished ? '' : `<div class="row noprint">${open ? `<button class="ok slim" data-resume-run="${i}">Reanudar</button>` : `<button class="sec slim" data-pause-run="${i}">${x.plans.length > 1 ? 'Pausar el protocolo' : 'Pausar'}</button>`}<button class="sec slim" data-start-run="${i}">Fecha de inicio</button><button class="sec slim" data-switch-run="${i}">Cambiar de protocolo</button></div>`}</div>`;
   };
   view.innerHTML = `<h1>Cronograma</h1>${cur.length ? cur.map(table).join('') : `<div class="card empty"><p>No hay protocolos en curso para esta persona.</p><p><a class="btn" href="#/biblioteca">Aplicar uno desde la Biblioteca</a></p></div>`}
     ${old.length ? `<details class="card"><summary>Terminados (${old.length})</summary>${old.map(table).join('')}</details>` : ''}`;
   const lab = (p) => labels.get(p.id) || p.name || 'plan', again = () => protocolos(view, r, ctx);
   $$('[data-pause-run]', view).forEach((b) => b.addEventListener('click', async () => { if (await pauseDialog(ctx, all[b.dataset.pauseRun].plans, lab)) again(); }));
+  $$('[data-switch-run]', view).forEach((b) => b.addEventListener('click', async () => { if (await switchDialog(ctx, all[b.dataset.switchRun].plans, lab)) again(); }));
   $$('[data-start-run]', view).forEach((b) => b.addEventListener('click', async () => { if (await startDialog(ctx, all[b.dataset.startRun].plans, lab)) again(); }));
   $$('[data-resume-run]', view).forEach((b) => b.addEventListener('click', async () => {
     const x = all[b.dataset.resumeRun], z = x.plans.flatMap((p) => pausesOf(p)).find((q) => !q.to);
