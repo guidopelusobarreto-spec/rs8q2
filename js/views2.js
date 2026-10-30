@@ -205,6 +205,7 @@ export async function planDetalle(view, r, ctx) {
 export function reportHTML(rep, products) {
   const pn = (id) => products.find((p) => p.id === id)?.substance || id;
   return `<h3>Informe ${rep.days} días · ${fmtDate(rep.start)} – ${fmtDate(rep.end)} · ${esc(rep.profile)}</h3>
+    ${rep.scope ? `<p class="small">Protocolo «${esc(rep.scope)}»${rep.substances > 1 ? ` · todas sus sustancias (${rep.substances})` : ''}.</p>` : ''}
     <dl class="kv"><dt>Peso inicial</dt><dd>${rep.initial != null ? fmtNum(rep.initial, 1) + ' kg' : '—'}</dd><dt>Peso actual</dt><dd>${rep.current != null ? fmtNum(rep.current, 1) + ' kg' : '—'}</dd>
       <dt>Diferencia</dt><dd>${rep.change ? `${rep.change.kg > 0 ? '+' : ''}${fmtNum(rep.change.kg)} kg (${rep.change.pct > 0 ? '+' : ''}${fmtNum(rep.change.pct)} %)` : '—'}</dd>
       <dt>Registros</dt><dd>${Object.entries(rep.counts).map(([k, n]) => `${ADMIN_STATUS[k]}: ${n}`).join(' · ')}</dd>

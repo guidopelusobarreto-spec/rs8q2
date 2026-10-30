@@ -1,5 +1,5 @@
 // Service worker: funciona sin conexión y gestiona avisos.
-const CACHE = 'registro-v17'; // igual que APP_VERSION en js/app.js
+const CACHE = 'registro-v18'; // igual que APP_VERSION en js/app.js
 const ASSETS = ['./', 'index.html', 'styles.css', 'manifest.webmanifest', 'icons/icon-192.png', 'icons/icon-512.png',
   'js/app.js', 'js/ui.js', 'js/model.js', 'js/store.js', 'js/catalog.js', 'js/safety.js', 'js/notify.js', 'js/views1.js', 'js/views2.js', 'js/views3.js',
   'js/schedule.js', 'js/text.js', 'js/hoy.js', 'js/pausas.js', 'js/ajustes.js', 'fonts/atkinson-400.woff2', 'fonts/atkinson-700.woff2'];

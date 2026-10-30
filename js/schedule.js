@@ -1,6 +1,7 @@
 // Frecuencias: se leen del texto literal de cada fase («1 vez por semana (SC)», «2 veces al día (mañana y noche…)»).
 // La lectura nunca sustituye al texto: se muestra al lado y el usuario puede corregirla por plan (plan.freqOverrides[texto]).
 import { addDays, diffDays, planEnd, planBaseEnd, phaseFor, activeDay, dateOfActiveDay, planWeek } from './model.js';
+import { CATALOG } from './catalog.js';
 
 export const MOMENTS = { manana: { label: 'Mañana', at: '09:00' }, mediodia: { label: 'Mediodía', at: '13:00' }, tarde: { label: 'Tarde', at: '17:00' }, noche: { label: 'Noche', at: '21:00' } };
 export const DAY_NAMES = ['domingo', 'lunes', 'martes', 'miércoles', 'jueves', 'viernes', 'sábado'];
@@ -89,7 +90,10 @@ const DONE = new Set(['realizado', 'retrasado']);
 // (p. ej. una toma anotada desde un recordatorio o desde «Registrar» sin elegir plan).
 // Día al que cuenta una toma: el suyo, o la toma prevista que cubre si se adelantó o se retrasó (a.forDate).
 export const when = (a) => a.forDate || a.date;
-export const belongsTo = (a, plan) => a.planId === plan.id || (!a.planId && !!plan.productId && a.productId === plan.productId);
+const first = (x) => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/[\s(—+-]/)[0];
+const subOf = (pid) => CATALOG.find((c) => c.id === pid)?.substance || '';
+// Si el plan aún no tiene presentación (p. ej. «15 o 30 mg»), cuenta la toma sin plan de la misma sustancia.
+export const belongsTo = (a, plan) => a.planId === plan.id || (!a.planId && (plan.productId ? a.productId === plan.productId : !!plan.substance && first(subOf(a.productId)) === first(plan.substance)));
 const activePhase = (plan, date) => {
   if (plan.closed || !plan.start || date < plan.start) return null;
   const end = planEnd(plan);

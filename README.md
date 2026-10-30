@@ -38,7 +38,7 @@ La frecuencia de cada fase se lee del texto escrito por el usuario («3 veces po
 - `js/views1.js`, `js/views2.js`, `js/ui.js`, `js/notify.js` — interfaz, PIN, notificaciones, .ics
 
 ## Pruebas
-- `npm test` — 58 pruebas de la lógica (Node 22, sin dependencias); 2 necesitan `LIB_FILE=<biblioteca.json>`.
+- `npm test` — 59 pruebas de la lógica (Node 22, sin dependencias); 2 necesitan `LIB_FILE=<biblioteca.json>`.
 - `LIB_FILE=<biblioteca.json> python3 -I tests/e2e.py http://localhost:8765/` — 135 comprobaciones de aceptación (con la biblioteca v4) en Chromium (Playwright), a 320 y 360 px.
 - `python3 -I tests/e2e_red_lenta.py .` — arranque con la red a 8 s (debe abrir en menos de 6 s).
 - `python3 -I tests/e2e_actualizacion.py .` — con «Cache-Control: max-age=600» (como GitHub Pages), una versión nueva se ve al volver a abrir la app.

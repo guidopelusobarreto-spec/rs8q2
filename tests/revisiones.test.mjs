@@ -99,3 +99,16 @@ test('calendario y avisos: una marca por protocolo, nada de los planes cerrados'
   assert.equal(al.filter((x) => /Revisión de 7 días/.test(x.text)).length, 1);
   assert.equal(al.filter((x) => /pendiente de confirmar/.test(x.text)).length, 1);
 });
+
+test('informe de un plan: cuenta todo el protocolo y las tomas sin plan de la misma sustancia aunque el plan no tenga presentación', async () => {
+  const { m, a } = await mk();
+  const reta = await m.addPlan(a.id, { mode: 'pendiente', start: '2026-09-18', productId: '', substance: 'Retatrutida', phases: [ph(1, null, 2, '1 vez por semana')], source: 'Biblioteca: Lipólisis' });
+  const crea = await m.addPlan(a.id, { mode: 'pendiente', start: '2026-09-18', productId: 'crea500', substance: 'Creatina monohidrato', phases: [ph(1, null, 5)], source: 'Biblioteca: Lipólisis' });
+  await m.addAdministration(a.id, { productId: 'reta30', date: '2026-09-25', time: '21:30', amount: 2, unit: 'mg', status: 'realizado' }); // desde un recordatorio, sin plan
+  await m.addAdministration(a.id, { productId: 'crea500', planId: crea.id, date: '2026-09-20', time: '09:00', amount: 5, unit: 'g', status: 'realizado' });
+  await m.addAdministration(a.id, { productId: 'bpc5', date: '2026-09-21', time: '09:00', status: 'realizado' }); // otra sustancia: no cuenta
+  const rep = await m.report(a.id, { planId: reta.id, days: 7 });
+  assert.equal(rep.admins.length, 2);
+  assert.equal(rep.scope, 'Lipólisis');
+  assert.equal(rep.substances, 2);
+});

@@ -690,8 +690,9 @@ export class Model {
     const inWin = weights.filter((w) => w.date > s);
     const current = inWin.length ? inWin[inWin.length - 1].kg : null;
     const change = initial != null && current != null ? weightChange(initial, current) : null;
-    // Tomas del plan, también las anotadas sin plan de la misma presentación; fechadas por la toma prevista que cubren.
-    const admins = (await this.list('administrations', profileId)).filter((a) => when(a) >= s && when(a) <= end && (!plan || belongsTo(a, plan)))
+    // Tomas del protocolo entero (todas las sustancias aplicadas juntas), también las anotadas sin plan; fechadas por la toma prevista que cubren.
+    const scope = plan ? runSiblings(await this.list('plans', profileId), plan) : [];
+    const admins = (await this.list('administrations', profileId)).filter((a) => when(a) >= s && when(a) <= end && (!plan || scope.some((x) => belongsTo(a, x))))
       .sort((a, b) => (a.date + a.time).localeCompare(b.date + b.time));
     const count = (st) => admins.filter((a) => a.status === st).length;
     const habits = (await this.list('habits', profileId)).filter((h) => h.date >= s && h.date <= end);
@@ -704,7 +705,7 @@ export class Model {
     if (!habits.length) missing.push('Hábitos');
     const nextReview = REVIEW_DAYS.map((d) => (plan && !start ? dateOfActiveDay(plan, d) : addDays(s, d))).find((d) => d > this.today()) || null;
     const feel = Object.fromEntries(Object.keys(FEEL).map((k) => [k, admins.filter((a) => a.feel === k).length]));
-    return { profile: profile.name, start: s, end, days, initial, current, change, admins,
+    return { profile: profile.name, scope: plan ? (libraryName(plan) || plan.name || '') : '', substances: scope.length, start: s, end, days, initial, current, change, admins,
       counts: { realizado: count('realizado'), omitido: count('omitido'), retrasado: count('retrasado'), cancelado: count('cancelado'), pendiente: count('pendiente') },
       symptoms: admins.filter((a) => a.symptoms || a.adverse).map((a) => ({ date: a.date, symptoms: a.symptoms, adverse: a.adverse })),
       incidents, habits, missing, nextReview, feel,
