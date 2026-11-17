@@ -152,7 +152,7 @@ export async function planDetalle(view, r, ctx) {
       <dt>Fuente</dt><dd>${esc(p.source || '—')}</dd><dt>Introducido por</dt><dd>${esc(p.enteredBy || '—')}</dd><dt>Registrado</dt><dd>${new Date(p.createdAt).toLocaleString('es-ES')}</dd></dl>
       <div class="row noprint" style="margin-top:.6rem"><button id="edit" class="sec">Editar</button>${lastReview ? `<button id="rev" class="sec">Marcar revisión del ${fmtDate(lastReview)} como hecha</button>` : ''}<button id="close" class="sec">${p.closed ? 'Reabrir' : 'Cerrar plan'}</button>
       <a class="btn sec" href="#/pct?ciclo=${p.id}">Seguimiento postciclo</a>
-      <button id="startBtn" class="sec">Fecha de inicio${sibs.length > 1 ? ' del protocolo' : ''}</button>${p.start < t ? '<button id="backBtn" class="sec">Días anteriores</button>' : ''}${p.closed ? '' : '<button id="switchBtn" class="sec">Cambiar de protocolo</button><button id="icsBtn" class="sec">Avisos en el calendario del móvil</button>'}</div>
+      <button id="startBtn" class="sec">Fecha de inicio${sibs.length > 1 ? ' del protocolo' : ''}</button>${p.start < t ? '<button id="backBtn" class="sec">Días anteriores</button>' : ''}${p.closed ? '' : '<button id="switchBtn" class="sec">Cambiar de protocolo</button><button id="icsBtn" class="sec">Avisos en Fossify</button>'}</div>
       ${p.trackFrom ? `<p class="small">El cumplimiento cuenta desde el ${fmtDate(p.trackFrom)}.</p>` : ''}
       ${p.history?.length ? `<details><summary>Historial de modificaciones (${p.history.length})</summary><ul class="small">${p.history.map((h) => `<li>${new Date(h.at).toLocaleString('es-ES')}: ${h.changes.map((c) => esc(c.field)).join(', ')}</li>`).join('')}</ul></details>` : ''}</div>
     ${protoHTML ? `<div class="card" id="protocolo"><h2 style="margin-top:0">Tu protocolo (guía)</h2>${protoHTML}</div>` : ''}
@@ -184,7 +184,7 @@ export async function planDetalle(view, r, ctx) {
   }));
   $$('[data-adj]').forEach((b) => b.addEventListener('click', async () => { if (await adjustDialog(ctx, p, p.phases[b.dataset.adj])) { toast('Cantidad cambiada'); again(); } }));
   $('#startBtn').addEventListener('click', async () => { if (await startDialog(ctx, sibs, labelOf)) again(); });
-  $('#icsBtn')?.addEventListener('click', () => calendarDialog(ctx, sibs, labelOf));
+  $('#icsBtn')?.addEventListener('click', () => calendarDialog(ctx));
   $('#switchBtn')?.addEventListener('click', async () => { const ids = await switchDialog(ctx, sibs, labelOf); if (ids) location.hash = '#/protocolos'; });
   $('#backBtn')?.addEventListener('click', async () => { if (await backfillDialog(ctx, sibs)) again(); });
   $$('[data-unpause]').forEach((b) => b.addEventListener('click', async () => { if (await removePauseDialog(ctx, sibs, pauses.find((x) => x.id === b.dataset.unpause), labelOf)) again(); }));

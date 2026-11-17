@@ -29,7 +29,7 @@ const ROUTES = {
   protocolos: H.protocolos, ficha: H.ficha, texto: H.texto, mas: H.mas, acerca: H.acerca,
 };
 
-export const APP_VERSION = 'v21 · 17-nov-2026'; // subir junto con CACHE en sw.js
+export const APP_VERSION = 'v22 · 17-nov-2026'; // subir junto con CACHE en sw.js
 export const ctx = { store: null, model: null, profileId: null, ui: null, locked: false, lastActive: Date.now() };
 
 async function loadUI() {
@@ -125,6 +125,20 @@ async function init() {
   }
   if (navigator.storage?.persist) navigator.storage.persist().catch(() => {});
   ctx.model = new Model(ctx.store);
+  // Si activaste «Actualizar Fossify automáticamente», cada cambio de plan reenvía los avisos (solo si algo cambió).
+  let icsTimer = null;
+  ctx.model.onPlansChange = (pid) => {
+    if (pid !== ctx.profileId) return;
+    clearTimeout(icsTimer);
+    icsTimer = setTimeout(async () => {
+      try {
+        const A = await import('./ajustes.js');
+        if (!(await A.calendarAuto(ctx))) return;
+        const r = await A.syncCalendar(ctx);
+        if (r?.name) toast(r.shared ? 'Avisos actualizados: elige Fossify Calendar' : `Avisos actualizados (${r.name}): ábrelo con Fossify Calendar`, 7000);
+      } catch (e) { console.warn('Fossify', e); }
+    }, 1500);
+  };
   await loadUI();
   ctx.profileId = ctx.ui.profileId;
   ctx.locked = !!(await ctx.store.get('settings', 'pin'));

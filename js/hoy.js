@@ -2,7 +2,7 @@
 import { esc, $, $$, toast, dialog, fmtDate, field, inp } from './ui.js';
 import { todayISO, planEnd, planBaseEnd, diffDays, addDays, planWeek, pausedOn, pausesOf, notesFor, restWindow, restText } from './model.js';
 import { pauseText, pauseDialog, resumeDialog } from './pausas.js';
-import { feelChip, feelDialog, guideBox, startDialog, guideContext, guideHTML, switchDialog, pendingDoses, reviewDialog, quickDialog, calendarDialog } from './ajustes.js';
+import { feelChip, feelDialog, guideBox, startDialog, guideContext, guideHTML, switchDialog, pendingDoses, reviewDialog, quickDialog, calendarDialog, calendarAuto, calendarUntil, syncCalendar } from './ajustes.js';
 import { MOMENTS, scheduleText, amountText, adherence, totalWeeks, substanceWeek, substanceWeekText } from './schedule.js';
 import { fmtDoc, fichaHTML, splitFichas, cleanInline } from './text.js';
 import { productOptions, exceedFlow } from './views1.js';
@@ -84,6 +84,9 @@ export async function hoy(view, r, ctx) {
   const resting = plans.filter((p) => !p.closed).map((p) => ({ p, rw: restWindow(p, t) })).filter((x) => x.rw && date >= x.rw.from && (date <= x.rw.to || !x.p.repeat));
   // Tomas previstas sin registrar (últimos 90 días), solo en Hoy.
   const pend = !embed && date === t ? await pendingDoses(ctx, plans) : [];
+  // Avisos de Fossify a punto de acabarse (si los actualizas automáticamente).
+  const icsUntil = !embed && date === t && (await calendarAuto(ctx)) ? await calendarUntil(ctx) : '';
+  const icsHTML = icsUntil ? `<div class="alert info pend-banner">Tus avisos en Fossify llegan hasta el ${esc(fmtDate(icsUntil))}. <button class="sec slim" id="icsMore">Actualizar</button></div>` : '';
   const head = `<div class="today-head"><h1>${date === t ? 'Hoy' : esc(longDate(date).replace(/^./, (c) => c.toUpperCase()))}</h1>
       ${ag.slots.length ? `<span class="chip ${doneN === ag.slots.length ? 'ok' : ''}">${doneN} de ${ag.slots.length} hechas</span>` : ''}</div>
     <div class="daynav noprint"><a class="btn sec slim" href="#/?d=${addDays(date, -1)}" aria-label="Día anterior">‹</a><span class="muted">${esc(longDate(date))}</span>${date !== t ? '<a class="btn sec slim" href="#/">Hoy</a>' : ''}<a class="btn sec slim" href="#/?d=${addDays(date, 1)}" aria-label="Día siguiente">›</a></div>`;
@@ -145,17 +148,18 @@ export async function hoy(view, r, ctx) {
         : `<p class="freq">Descanso terminado el ${esc(fmtDate(rw.to))}.</p>${ask(p, date)}`}</div>`).join('');
   const pendHTML = pend.length ? `<div class="alert aviso pend-banner"><strong>Tienes ${pend.length} ${pend.length === 1 ? 'toma prevista' : 'tomas previstas'} sin registrar</strong> desde el ${esc(fmtDate(pend[0].date))}. <button class="sec slim" id="pendBtn">Revisar</button></div>` : '';
   const nothing = !ag.slots.length && !ag.weekly.length && !ag.demand.length && !ag.interval.length && !ag.unknown.length && !paused.length && !resting.length;
-  view.innerHTML = (embed ? '' : head + pendHTML + runsHTML) + (pausedHTML ? `<h2 class="grp">En pausa</h2>${pausedHTML}` : '') + (restHTML ? `<h2 class="grp">En descanso</h2>${restHTML}` : '') + (nothing ? `<div class="card empty"><p>Nada previsto ${date === t ? 'hoy' : 'este día'}.</p><p><a href="#/biblioteca">Aplicar un protocolo</a></p></div>` : '')
+  view.innerHTML = (embed ? '' : head + pendHTML + icsHTML + runsHTML) + (pausedHTML ? `<h2 class="grp">En pausa</h2>${pausedHTML}` : '') + (restHTML ? `<h2 class="grp">En descanso</h2>${restHTML}` : '') + (nothing ? `<div class="card empty"><p>Nada previsto ${date === t ? 'hoy' : 'este día'}.</p><p><a href="#/biblioteca">Aplicar un protocolo</a></p></div>` : '')
     + groups.map(([l, a]) => `<h2 class="grp">${esc(l)}</h2>${a.map(card).join('')}`).join('')
     + (weekly ? `<h2 class="grp">Esta semana</h2>${weekly}` : '') + (interval ? `<h2 class="grp">Cada varios días</h2>${interval}` : '') + (demand ? `<h2 class="grp">A demanda</h2>${demand}` : '') + (unknown ? `<h2 class="grp">Revisar</h2>${unknown}` : '')
     + '<p class="noprint" style="margin-top:1.2rem"><button class="sec" data-quick="1">＋ Registrar otra toma</button> <a class="small" href="#/registro">Formulario completo</a></p>';
   const again = () => hoy(view, r, ctx);
   const slot = (k) => ag.slots.find((s) => s.key === k);
   view.onclick = async (e) => {
-    const b = e.target.closest('button[data-do], button[data-undo], button[data-feel], button[data-quick], button[data-next], button[data-stop], #pendBtn');
+    const b = e.target.closest('button[data-do], button[data-undo], button[data-feel], button[data-quick], button[data-next], button[data-stop], #pendBtn, #icsMore');
     if (!b) return;
     b.disabled = true;
     try {
+      if (b.id === 'icsMore') { const res = await syncCalendar(ctx, { force: true }); if (res?.name) toast(res.shared ? 'Elige Fossify Calendar' : `Descargado ${res.name}: ábrelo con Fossify`, 7000); return again(); }
       if (b.id === 'pendBtn') { await reviewDialog(ctx, pend, L); return again(); }
       if (b.dataset.quick) { await quickDialog(ctx, date, plans, L); return again(); }
       if (b.dataset.next) { const st = b.dataset.start || date; await m.startNextCycle(pid, b.dataset.next, st); toast(st > date ? `Ciclo nuevo desde el ${fmtDate(st)}` : 'Ciclo nuevo empezado'); return again(); }
@@ -249,13 +253,13 @@ export async function protocolos(view, r, ctx) {
       <div class="table-wrap"><table class="crono"><thead><tr><th class="sub">Semana</th>${Array.from({ length: weeks }, (_, i) => `<th class="${i + 1 === now ? 'now' : ''}">${i + 1}</th>`).join('')}<th title="Tomas hechas frente a previstas hasta hoy">Cumpl.</th></tr></thead><tbody>${rows}</tbody></table></div>
       <p class="small muted">Cumplimiento: tomas registradas como hechas frente a las previstas por tus fases hasta hoy.${pz.length ? ' Las semanas cuentan solo días activos.' : ''}</p>
       ${pz.length ? `<p class="small"><strong>Pausas:</strong> ${pz.map((z) => esc(pauseText(z))).join(' · ')}</p>` : ''}
-      ${finished ? '' : `<div class="row noprint">${open ? `<button class="ok slim" data-resume-run="${i}">Reanudar</button>` : `<button class="sec slim" data-pause-run="${i}">${x.plans.length > 1 ? 'Pausar el protocolo' : 'Pausar'}</button>`}<button class="sec slim" data-start-run="${i}">Fecha de inicio</button><button class="sec slim" data-switch-run="${i}">Cambiar de protocolo</button><button class="sec slim" data-ics-run="${i}">Avisos en el móvil</button></div>`}</div>`;
+      ${finished ? '' : `<div class="row noprint">${open ? `<button class="ok slim" data-resume-run="${i}">Reanudar</button>` : `<button class="sec slim" data-pause-run="${i}">${x.plans.length > 1 ? 'Pausar el protocolo' : 'Pausar'}</button>`}<button class="sec slim" data-start-run="${i}">Fecha de inicio</button><button class="sec slim" data-switch-run="${i}">Cambiar de protocolo</button><button class="sec slim" data-ics-run="${i}">Avisos en Fossify</button></div>`}</div>`;
   };
   view.innerHTML = `<h1>Cronograma</h1>${cur.length ? cur.map(table).join('') : `<div class="card empty"><p>No hay protocolos en curso para esta persona.</p><p><a class="btn" href="#/biblioteca">Aplicar uno desde la Biblioteca</a></p></div>`}
     ${old.length ? `<details class="card"><summary>Terminados (${old.length})</summary>${old.map(table).join('')}</details>` : ''}`;
   const lab = (p) => labels.get(p.id) || p.name || 'plan', again = () => protocolos(view, r, ctx);
   $$('[data-pause-run]', view).forEach((b) => b.addEventListener('click', async () => { if (await pauseDialog(ctx, all[b.dataset.pauseRun].plans, lab)) again(); }));
-  $$('[data-ics-run]', view).forEach((b) => b.addEventListener('click', () => calendarDialog(ctx, all[b.dataset.icsRun].plans, lab)));
+  $$('[data-ics-run]', view).forEach((b) => b.addEventListener('click', () => calendarDialog(ctx)));
   $$('[data-switch-run]', view).forEach((b) => b.addEventListener('click', async () => { if (await switchDialog(ctx, all[b.dataset.switchRun].plans, lab)) again(); }));
   $$('[data-start-run]', view).forEach((b) => b.addEventListener('click', async () => { if (await startDialog(ctx, all[b.dataset.startRun].plans, lab)) again(); }));
   $$('[data-resume-run]', view).forEach((b) => b.addEventListener('click', async () => {

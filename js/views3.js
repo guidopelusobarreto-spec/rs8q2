@@ -75,7 +75,7 @@ async function applyDialog(ctx, t, products, profiles) {
     ${field('Persona', `<select name="profileId">${profiles.map((p) => opt(p.id, p.name, ctx.profileId)).join('')}</select>`, true)}
     ${field('Fecha de inicio', inp('start', todayISO(), 'type="date" required'), true)}
     ${field(`Duración (${unitTxt(t)})`, inp('duration', fixed ? t.durationMin : '', 'type="number" min="1" step="1"'))}
-    <p class="small muted">${esc(hint)} Si la dejas vacía, el plan queda «pendiente» sin fecha final.</p>
+    <p class="small muted">${esc(hint)} ${t.mode === 'continuo' ? 'Déjala vacía para uso continuo, sin fecha final.' : 'Si la dejas vacía, el plan queda «pendiente» sin fecha final.'}</p>
     ${t.items.map((it, i) => field(`Producto para «${it.substance}»`, `<select name="p${i}">${productOptions(products, it.productId)}</select>`)).join('')}
     <p class="small muted">Si una sustancia no está en el catálogo, añádela antes en Catálogo → «Añadir producto».</p>
     <div class="row"><button>Crear planes</button><button type="button" class="sec" data-close>Cancelar</button></div></form>`,

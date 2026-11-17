@@ -1,9 +1,9 @@
 // Ajustes personales del ciclo: cómo sienta cada toma, notas-guía del usuario, cambio de cantidad desde una semana,
 // fecha de inicio de un protocolo y días anteriores al alta. La app registra y muestra; no propone cantidades.
 import { esc, toast, dialog, fmtDate, field, inp, opt, download } from './ui.js';
-import { FEEL, todayISO, addDays, planWeek, planEnd, phaseFor, restWindow } from './model.js';
+import { FEEL, todayISO, toISODate, addDays, planWeek, planEnd, phaseFor, restWindow } from './model.js';
 import { missingDoses, slotsOn, MOMENTS, amountText } from './schedule.js';
-import { eventsToICS } from './notify.js';
+import { eventsToICS, deliverICS } from './notify.js';
 import { parseFicha, splitFichas, cleanInline } from './text.js';
 
 // ── Cómo sienta ──
@@ -281,41 +281,90 @@ export async function quickDialog(ctx, date, plans, labelOf = (p) => p.name || '
 }
 const longDay = (d) => new Date(d + 'T12:00:00').toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
 
-// ── Avisos en el calendario del móvil: un evento por toma prevista (con su hora) y los avisos del ciclo ──
-// Desde hoy hasta el fin del plan (máximo 12 semanas; 4 si el plan no tiene fin). Las tomas «a demanda», por cupo semanal o «cada N a M días» no tienen día fijo: no se incluyen.
-export function calendarEvents(plans, labelOf = (p) => p.name || 'plan', today = todayISO()) {
+// ── Avisos en Fossify Calendar: un evento por toma prevista (con su hora) y los avisos del ciclo ──
+// Desde hoy hasta el fin del plan (máximo 12 semanas; 4 si el plan no tiene fin). Las tomas a demanda, por cupo semanal
+// o «cada N a M días» no tienen día fijo: no se incluyen. Sin hora en tu texto: 1 toma → 09:00; 2 → 09:00 y 21:00; 3 → 09:00, 15:00 y 21:00.
+const DEFAULT_AT = { 1: ['09:00'], 2: ['09:00', '21:00'], 3: ['09:00', '15:00', '21:00'] };
+export const icsKey = (p) => p.substance || p.productId || p.id;
+export function calendarEvents(plans, labelOf = (p) => p.name || 'plan', today = todayISO(), off = []) {
   const ev = [];
   const at = (d, hhmm) => new Date(`${d}T${hhmm}:00`);
   for (const p of plans) {
-    if (p.closed || !p.start) continue;
-    const end = planEnd(p), from = p.start > today ? p.start : today, to = end && end < addDays(from, 83) ? end : addDays(from, end ? 83 : 27); // sin fin: 4 semanas
+    if (p.closed || !p.start || off.includes(icsKey(p))) continue;
+    const end = planEnd(p), from = p.start > today ? p.start : today, to = end && end < addDays(from, 83) ? end : addDays(from, end ? 83 : 27);
     for (let d = from; d <= to; d = addDays(d, 1)) {
-      for (const s of slotsOn(p, d)) {
-        const hhmm = s.time || MOMENTS[s.moment]?.at || '09:00';
-        ev.push({ uid: `${p.id}-${d}-${s.index}`, start: at(d, hhmm), minutes: 15, title: `${labelOf(p)} · ${amountText(s.phase) || 'toma'}`, desc: 'Toma prevista por tu plan. Regístrala en la app Registro de sustancias.' });
+      const sl = slotsOn(p, d);
+      for (const s of sl) {
+        const hhmm = s.time || MOMENTS[s.moment]?.at || (DEFAULT_AT[sl.length] || DEFAULT_AT[1])[s.index] || '09:00';
+        ev.push({ uid: `${p.id}-${d}-${s.index}`, start: at(d, hhmm), minutes: 15, title: `💊 ${labelOf(p)} · ${amountText(s.phase) || 'toma'}`, desc: 'Toma prevista por tu plan. Regístrala en la app Registro de sustancias.' });
       }
     }
     const rw = restWindow(p, today);
     if (rw && end) {
       const add = (d, title) => { if (d >= today) ev.push({ uid: `${p.id}-ciclo-${d}`, start: at(d, '10:00'), minutes: 15, title, desc: 'Aviso de tu ciclo (app Registro de sustancias).' }); };
-      add(addDays(end, -1), `Mañana termina el ciclo: ${labelOf(p)}`);
-      add(end, `Hoy termina el ciclo: ${labelOf(p)}. Descanso hasta el ${fmtDate(rw.to)}`);
-      add(rw.to, `Mañana termina el descanso: ${labelOf(p)}. Decide si empiezas otro ciclo el ${fmtDate(rw.restart)}`);
+      add(addDays(end, -1), `⏳ Mañana termina el ciclo: ${labelOf(p)}`);
+      add(end, `🏁 Hoy termina el ciclo: ${labelOf(p)}. Descanso hasta el ${fmtDate(rw.to)}`);
+      add(rw.to, `🔁 Mañana termina el descanso: ${labelOf(p)}. Decide si empiezas otro ciclo el ${fmtDate(rw.restart)}`);
     }
   }
   return ev.sort((a, b) => a.start - b.start);
 }
-export async function calendarDialog(ctx, plans, labelOf = (p) => p.name || 'plan') {
-  const ev = calendarEvents(plans, labelOf);
-  if (!ev.length) { toast('No hay tomas con día fijo a partir de hoy'); return false; }
-  const last = ev[ev.length - 1].start.toISOString().slice(0, 10);
-  const ok = await dialog(`<form><h2>Avisos en el calendario del móvil</h2>
-    <p>Se crea un archivo con <strong>${ev.length} avisos</strong> (cada toma a su hora y los avisos de fin de ciclo y de descanso) desde hoy hasta el ${esc(fmtDate(last))}.</p>
-    <ol class="small"><li>Pulsa <strong>Descargar</strong>.</li><li>Abre el archivo descargado y elige <strong>Fossify Calendar</strong>. Si no aparece: en Fossify, menú ⋮ → <strong>Importar eventos desde un archivo .ics</strong>.</li>
-    <li>Al importar, elige o crea un tipo de evento propio (por ejemplo, «Tomas») para poder ocultarlo cuando quieras.</li></ol>
-    <p class="small muted">El calendario avisa aunque la app esté cerrada. Registrar la toma se sigue haciendo en la app. Si cambias el plan, vuelve a descargar el archivo.</p>
-    <div class="row"><button class="ok">Descargar</button><button type="button" class="ghost" data-close>Cancelar</button></div></form>`);
+const icsCfg = async (ctx) => (await ctx.store.get('settings', 'icsCfg')) || { id: 'icsCfg', auto: false, off: [], saved: false };
+// Exporta a Fossify los avisos de la persona activa. Solo si algo cambió (o force). Lo que ya no toca se manda como «🗑 BORRAR» sin alarma.
+export async function syncCalendar(ctx, { force = false, deliver = deliverICS } = {}) {
+  const m = ctx.model, pid = ctx.profileId;
+  if (!pid) return { changed: false };
+  const plans = await m.list('plans', pid), labels = await m.planLabels(plans), cfg = await icsCfg(ctx);
+  const ev = calendarEvents(plans, (p) => labels.get(p.id) || p.name || 'plan', m.today(), cfg.off || []);
+  const reg = (await ctx.store.get('settings', 'icsReg')) || { id: 'icsReg', byProfile: {}, lm: 0 };
+  const prev = reg.byProfile[pid]?.items || {}, now = m.now();
+  const cur = Object.fromEntries(ev.map((e) => [e.uid, { s: e.start.toISOString(), t: e.title }]));
+  const gone = Object.entries(prev).filter(([u, v]) => !cur[u] && new Date(v.s) > now).map(([u, v]) => ({ uid: u, start: new Date(v.s), minutes: 15, title: v.t, cancel: true }));
+  // Cambio = algo que ya estaba en Fossify se quita o se mueve, o aparece una toma nueva dentro de lo ya enviado.
+  // (Que el horizonte avance con los días no cuenta: para eso está «Actualizar» en Hoy.)
+  // Lo ya cubierto: hasta 4 semanas desde el último envío (el horizonte mínimo de cualquier plan).
+  const covered = reg.byProfile[pid]?.covered ? new Date(`${reg.byProfile[pid].covered}T00:00:00`) : null;
+  const changed = gone.length > 0 || ev.some((e) => (prev[e.uid] ? prev[e.uid].s !== cur[e.uid].s || prev[e.uid].t !== cur[e.uid].t : !covered || e.start < covered));
+  if (!force && !changed) return { changed: false };
+  if (!ev.length && !gone.length) return { changed: false, empty: true };
+  const lm = Math.max(m.now().getTime(), (reg.lm || 0) + 1000); // LAST-MODIFIED siempre creciente
+  const res = await deliver(eventsToICS([...ev, ...gone], new Date(lm)), 'avisos_tomas');
+  if (!res) return { changed: true, cancelled: true };
+  const lastEv = ev[ev.length - 1]?.start;
+  reg.byProfile[pid] = { items: cur, covered: addDays(m.today(), 28), until: lastEv ? toISODate(lastEv) : '' };
+  reg.lm = lm;
+  await ctx.store.put('settings', reg);
+  return { changed: true, ...res, n: ev.length, gone: gone.length };
+}
+// Si los avisos enviados se acaban en menos de una semana y tus planes siguen después: fecha del último aviso enviado (si no, '').
+export async function calendarUntil(ctx) {
+  const until = (await ctx.store.get('settings', 'icsReg'))?.byProfile?.[ctx.profileId]?.until || '', m = ctx.model;
+  if (!until || addDays(m.today(), 7) <= until) return '';
+  const cfg = await icsCfg(ctx), plans = await m.list('plans', ctx.profileId);
+  return calendarEvents(plans, undefined, m.today(), cfg.off || []).some((e) => toISODate(e.start) > until) ? until : '';
+}
+export async function calendarAuto(ctx) { return !!(await icsCfg(ctx)).auto; }
+export async function calendarDialog(ctx) {
+  const m = ctx.model, plans = (await m.list('plans', ctx.profileId)).filter((p) => !p.closed), labels = await m.planLabels(plans), cfg = await icsCfg(ctx);
+  const keys = [...new Map(plans.map((p) => [icsKey(p), labels.get(p.id) || p.name || 'plan'])).entries()];
+  if (!keys.length) { toast('No tienes planes activos'); return false; }
+  let out = null;
+  const ok = await dialog(`<form><h2>Avisos en Fossify Calendar</h2>
+    <p class="small">Cada toma con día fijo, a su hora, y los avisos de fin de ciclo y de descanso. Fossify los guarda en su propio tipo de evento, «TOMAS», que puedes ocultar.</p>
+    <fieldset><legend>¿De qué quieres aviso?</legend>${keys.map(([k, l]) => `<label class="check"><input type="checkbox" name="on" value="${esc(k)}" data-multi ${(cfg.off || []).includes(k) ? '' : 'checked'}>${esc(l)}</label>`).join('')}</fieldset>
+    <label class="check"><input type="checkbox" name="auto" ${cfg.auto || !cfg.saved ? 'checked' : ''}>Actualizar Fossify automáticamente cuando cambie un plan</label>
+    <ol class="small"><li>Pulsa <strong>Enviar a Fossify</strong>.</li><li>Elige <strong>Fossify Calendar</strong> (o abre la descarga: «Descarga completada · Abrir») e importa.</li></ol>
+    <p class="small muted">Si cambias un plan, se actualizan los mismos eventos (no se duplican). Los que ya no tocan se vacían y pasan a la categoría PAPELERA (01/01/2000), sin alarma; si quieres borrarlos del todo, hazlo desde los ajustes de Fossify donde se gestionan los tipos de evento.</p>
+    <div class="row"><button class="ok">Enviar a Fossify</button><button type="button" class="ghost" data-close>Cancelar</button></div></form>`, {
+    onSubmit: async (d) => {
+      const on = d.on || [];
+      await ctx.store.put('settings', { id: 'icsCfg', auto: !!d.auto, saved: true, off: keys.map(([k]) => k).filter((k) => !on.includes(k)) });
+      out = await syncCalendar(ctx, { force: true });
+      return true;
+    },
+  });
   if (!ok) return false;
-  download(`avisos_tomas_${todayISO()}.ics`, eventsToICS(ev), 'text/calendar');
+  if (out?.empty) toast('No hay tomas con día fijo a partir de hoy');
+  else if (out?.name) toast(out.shared ? 'Enviado: elige Fossify Calendar' : `Descargado ${out.name}: ábrelo con Fossify Calendar`, 7000);
   return true;
 }

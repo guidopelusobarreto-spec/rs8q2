@@ -105,17 +105,43 @@ export function remindersToICS(items) {
   return lines.join('\r\n') + '\r\n';
 }
 
-// ── .ics de tus tomas y avisos de ciclo, para importarlos en el calendario del móvil (p. ej. Fossify Calendar) ──
-// events: [{ uid, start: Date, minutes, title, desc }]. Horas en UTC (Z) para que no dependan del huso del calendario.
-const utc = (d) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
-export function eventsToICS(events) {
-  const stamp = utc(new Date());
-  const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//registro-sustancias//ES', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH'];
+// ── .ics de tus tomas y avisos de ciclo para Fossify Calendar (mismo formato que Guido PRO, comprobado con IcsImporter de Fossify) ──
+// · Horas locales sin «Z»: Fossify las guarda tal cual en el huso del móvil.
+// · UID estables: al reimportar, Fossify ACTUALIZA el evento si LAST-MODIFIED es mayor que el guardado → marca siempre creciente.
+// · Fossify ignora el texto de cada VALARM: toda la información va en el título. Un solo aviso por evento.
+// · CATEGORIES:TOMAS → Fossify lo importa en su propio tipo de evento (se puede ocultar).
+const pad2 = (n) => String(n).padStart(2, '0');
+const local = (d) => `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}T${pad2(d.getHours())}${pad2(d.getMinutes())}00`;
+const utcZ = (d) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+// events: [{ uid, start: Date, minutes, title, desc, cancel? }]. cancel = aviso que ya no toca: como en Guido PRO, se vacía y se
+// mueve al 01/01/2000 en la categoría PAPELERA (sin alarma), así sale de tu agenda sin tener que borrarlo a mano.
+export function eventsToICS(events, lastModified = new Date()) {
+  const lm = utcZ(lastModified);
+  const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//registro-sustancias//ES', 'CALSCALE:GREGORIAN'];
   for (const e of events) {
-    lines.push('BEGIN:VEVENT', `UID:${e.uid}@registro-sustancias`, `DTSTAMP:${stamp}`, `DTSTART:${utc(e.start)}`, `DURATION:PT${e.minutes || 15}M`,
-      `SUMMARY:${icsEsc(e.title)}`, `DESCRIPTION:${icsEsc(e.desc || '')}`,
-      'BEGIN:VALARM', 'ACTION:DISPLAY', 'TRIGGER:-PT0M', `DESCRIPTION:${icsEsc(e.title)}`, 'END:VALARM', 'END:VEVENT');
+    lines.push('BEGIN:VEVENT', `UID:${e.uid}@registro-sustancias`, `DTSTAMP:${lm}`, `LAST-MODIFIED:${lm}`);
+    if (e.cancel) {
+      lines.push('DTSTART:20000101T000000', 'DTEND:20000101T001000', `SUMMARY:${icsEsc('🗑 Libre — ' + String(e.title || '').replace(/^🗑[^—]*—\s*/, ''))}`,
+        'CATEGORIES:PAPELERA', 'X-FOSSIFY-CATEGORY-COLOR:-8355712', 'STATUS:CANCELLED', 'TRANSP:TRANSPARENT', 'END:VEVENT');
+      continue;
+    }
+    const end = new Date(e.start.getTime() + (e.minutes || 15) * 60000);
+    lines.push(`DTSTART:${local(e.start)}`, `DTEND:${local(end)}`, `SUMMARY:${icsEsc(e.title)}`, `DESCRIPTION:${icsEsc(e.desc || '')}`,
+      'CATEGORIES:TOMAS', 'X-FOSSIFY-CATEGORY-COLOR:-14575885', 'STATUS:CONFIRMED',
+      'BEGIN:VALARM', 'ACTION:DISPLAY', 'TRIGGER:-P0DT0H0M0S', `DESCRIPTION:${icsEsc(e.title)}`, 'END:VALARM', 'END:VEVENT');
   }
   lines.push('END:VCALENDAR');
   return lines.join('\r\n') + '\r\n';
+}
+// Entrega: compartir el archivo si el navegador lo permite; si no, descarga con nombre único (Android muestra «Descarga completada · Abrir»).
+export async function deliverICS(ics, base) {
+  const now = new Date(), name = `${base}_${pad2(now.getHours())}${pad2(now.getMinutes())}${pad2(now.getSeconds())}.ics`;
+  try {
+    const file = new File([ics], name, { type: 'text/calendar' });
+    if (navigator.canShare?.({ files: [file] })) { await navigator.share({ files: [file], title: name }); return { shared: true, name }; }
+  } catch (e) { if (e?.name === 'AbortError') return null; }
+  const url = URL.createObjectURL(new Blob([ics], { type: 'text/calendar' }));
+  const a = document.createElement('a'); a.href = url; a.download = name; document.body.append(a); a.click(); a.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 3000);
+  return { shared: false, name };
 }

@@ -250,6 +250,7 @@ export class Model {
     const rec = { ...data, id: uid(), profileId, createdAt: this.stamp() };
     await this.store.put(c, rec);
     await this._audit(profileId, c, rec.id, 'creado', null);
+    if (c === 'plans') this._planChanged(profileId);
     return rec;
   }
   async list(c, profileId) {
@@ -271,6 +272,7 @@ export class Model {
     next.history = [...(cur.history || []), { at: this.stamp(), changes }];
     await this.store.put(c, next);
     await this._audit(owner, c, id, 'modificado', changes);
+    if (c === 'plans') this._planChanged(owner);
     return next;
   }
   async _audit(profileId, coll, recId, action, changes) {
@@ -310,6 +312,8 @@ export class Model {
     rec.computedEnd = planEnd(rec);
     return this._add('plans', profileId, rec);
   }
+  // Aviso a la interfaz cuando cambia un plan (para actualizar Fossify si lo has activado).
+  _planChanged(profileId) { try { this.onPlansChange?.(profileId); } catch { /* sin efecto en la lógica */ } }
   async updatePlan(profileId, id, patch) {
     if (patch.phases !== undefined) patch = { ...patch, phases: parsePhases(patch.phases) };
     const p = await this._update('plans', id, patch, profileId);
@@ -920,7 +924,7 @@ export class Model {
     for (const [i, it] of t.items.entries()) {
       const notes = [t.route && `Vía: ${t.route}`, t.durationText && `Duración del protocolo: ${t.durationText}`, t.restText && `Descanso / después: ${t.restText}`, it.notes, t.notes].filter(Boolean).join('\n');
       out.push(await this.addPlan(profileId, { name: t.items.length > 1 ? `${t.name} — ${it.substance}` : t.name, productId: products[i] ?? it.productId ?? '',
-        mode: dur ? 'duracion' : 'pendiente', substance: it.substance, start: d.start, duration: dur, durationUnit: unit, phases: it.phases,
+        mode: dur ? 'duracion' : t.mode === 'continuo' ? 'continuo' : 'pendiente', substance: it.substance, start: d.start, duration: dur, durationUnit: unit, phases: it.phases,
         source: `Biblioteca: ${t.name}${t.source ? ' · ' + t.source : ''}`, enteredBy: 'Biblioteca de protocolos', templateId: t.id, notes, ficha: it.ficha || '',
         rest: parseRest(t.restText), repeat: false })); // al terminar el descanso, la app pregunta
     }
@@ -961,7 +965,7 @@ export function validateLibrary(data) {
       try { items.push({ substance: it.substance || '', productId: it.productId || '', notes: it.notes || '', phases: parsePhases(it.phases || []), ficha: it.ficha ? String(it.ficha) : '' }); }
       catch (e) { errors.push(`${where} · ${it.substance}: ${e.message}`); }
     }
-    templates.push({ id: t.id, name: t.name, compound: t.compound || '', sex: t.sex, kind: t.items.length > 1 ? 'combinado' : 'sustancia', route: t.route || '',
+    templates.push({ id: t.id, name: t.name, compound: t.compound || '', sex: t.sex, kind: t.items.length > 1 ? 'combinado' : 'sustancia', route: t.route || '', mode: t.mode === 'continuo' ? 'continuo' : '',
       durationText: t.durationText || '', durationMin: num(t.durationMin), durationMax: num(t.durationMax), durationUnit: t.durationUnit || 'semanas',
       restText: t.restText || '', notes: t.notes || '', source: t.source || '', blocked: t.blocked || null, items });
   }

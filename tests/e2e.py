@@ -499,15 +499,38 @@ with sync_playwright() as p:
         ok('biblioteca: vuelve a la versión actual sin errores', dlg(page).get_attribute('open') is None)
     page.select_option('#profileSel', label='Ana'); page.wait_for_timeout(300)
 
-    # avisos en el calendario del móvil (.ics)
+    # avisos en Fossify Calendar (.ics como Guido PRO) y actualización automática
     go(page, '#/planes'); page.wait_for_timeout(300)
     page.locator('main li', has_text='Lipólisis (Mujeres) — Creatina').filter(has_not_text='Cerrado').first.locator('a').first.click(); page.wait_for_timeout(500)
     page.click('#icsBtn'); page.wait_for_timeout(300)
-    ok('calendario del móvil: explica cómo importarlo en Fossify', 'Fossify Calendar' in dlg(page).inner_text() and 'avisos' in dlg(page).inner_text())
+    t = dlg(page).inner_text()
+    ok('Fossify: explica cómo importarlo y deja elegir sustancias', 'Fossify Calendar' in t and dlg(page).locator('input[name=on]').count() >= 1)
+    ok('Fossify: actualización automática marcada por defecto', dlg(page).locator('input[name=auto]').is_checked())
     with page.expect_download() as dl_info:
-        dlg(page).locator('button:has-text("Descargar")').click()
-    ics = open(dl_info.value.path(), encoding='utf-8').read()
-    ok(f'calendario del móvil: archivo .ics con avisos ({ics.count("BEGIN:VEVENT")})', ics.startswith('BEGIN:VCALENDAR') and ics.count('BEGIN:VEVENT') >= 1 and 'BEGIN:VALARM' in ics)
+        dlg(page).locator('button:has-text("Enviar a Fossify")').click()
+    name = dl_info.value.suggested_filename
+    ics = open(dl_info.value.path(), encoding='utf-8', newline='').read()
+    import re as _re
+    ok(f'Fossify: nombre único por envío ({name})', _re.fullmatch(r'avisos_tomas_\d{6}\.ics', name) is not None)
+    ok(f'Fossify: .ics con hora local, categoría TOMAS y aviso ({ics.count("BEGIN:VEVENT")} eventos)',
+       ics.startswith('BEGIN:VCALENDAR') and ics.count('BEGIN:VEVENT') >= 1 and 'CATEGORIES:TOMAS' in ics and 'TRIGGER:-P0DT0H0M0S' in ics
+       and _re.search(r'DTSTART:\d{8}T\d{6}\r\n', ics) is not None and 'LAST-MODIFIED:' in ics)
+    # cambiar el plan (quitar su pausa) → se manda solo el archivo actualizado, con los mismos UID y marca mayor
+    with page.expect_download(timeout=8000) as dl2:
+        page.locator('[data-unpause]').last.click(); page.wait_for_timeout(300)
+        dlg(page).locator('button:has-text("Borrar")').click()
+    ics2 = open(dl2.value.path(), encoding='utf-8', newline='').read()
+    lm1, lm2 = _re.search(r'LAST-MODIFIED:(\S+)', ics).group(1), _re.search(r'LAST-MODIFIED:(\S+)', ics2).group(1)
+    uids1, uids2 = set(_re.findall(r'UID:(\S+)', ics)), set(_re.findall(r'UID:(\S+)', ics2))
+    ok(f'Fossify: al cambiar el plan se actualiza solo, sin duplicar ({len(uids2)} eventos, {len(uids1 & uids2)} ya enviados)', lm2 > lm1 and uids1 <= uids2 and len(uids2) > len(uids1))
+    # pausa desde mañana → lo que ya no toca pasa a PAPELERA (01/01/2000) sin alarma
+    page.locator('#pause').click(); page.wait_for_timeout(300)
+    d = dlg(page); d.locator('[name=from]').fill(iso(today + dt.timedelta(days=1)))
+    with page.expect_download(timeout=8000) as dl3:
+        d.locator('button:has-text("Pausar")').click()
+    ics3 = open(dl3.value.path(), encoding='utf-8', newline='').read()
+    trash = [x for x in ics3.split('BEGIN:VEVENT') if 'CATEGORIES:PAPELERA' in x]
+    ok(f'Fossify: pausa → {len(trash)} avisos a PAPELERA sin alarma', trash and all('DTSTART:20000101T000000' in x and 'VALARM' not in x for x in trash))
 
     # importador de texto
     go(page, '#/planes'); page.wait_for_timeout(200); page.click('#imp')
