@@ -136,9 +136,13 @@ export async function hoy(view, r, ctx) {
       <p class="freq">${esc(pauseText(g.pause))}${g.pause.note ? ` · ${esc(g.pause.note)}` : ''}</p>${g.plans.length > 1 ? `<p class="freq">${g.plans.map((p) => esc(L(p))).join(', ')}</p>` : ''}
       ${guideBox([...new Map(g.plans.flatMap((p) => notesFor(p, date)).map((n) => [n.text, n])).values()])}
       <div class="acts">${!g.pause.to && date === t ? `<button class="ok" data-do="resume" data-i="${i}">Reanudar hoy</button>` : ''}<a class="btn sec" href="#/plan/${g.plans[0].id}">Ver el plan</a></div></div>`).join('');
+  // Descanso: cuenta los días; al final, propone la fecha de tu protocolo y pregunta si sigues (salvo «empezar solo»).
+  const ask = (p, start) => `<p class="freq"><strong>¿Empiezas un nuevo ciclo${start > date ? ` el ${esc(fmtDate(start))}` : ''}?</strong></p>
+      <div class="acts"><button class="ok" data-next="${p.id}" data-start="${start}">Sí, empezar ${start > date ? 'el ' + esc(fmtDate(start).slice(0, 5)) : 'hoy'}</button><button class="sec" data-stop="${p.id}">No seguir</button></div>`;
   const restHTML = resting.map(({ p, rw }) => `<div class="dose paused" style="--h:${hueFor(L(p))}"><div class="top"><span class="name">${esc(L(p))}</span><span class="chip">Descanso</span></div>
-      ${date <= rw.to ? `<p class="freq wk">Descanso: día ${diffDays(rw.from, date) + 1} de ${rw.days}</p><p class="freq">${date === rw.to ? (p.repeat ? '<strong>Mañana empiezas un nuevo ciclo.</strong>' : '<strong>Mañana termina el descanso.</strong>') : `Vuelves el ${esc(fmtDate(rw.restart))}${p.repeat ? ' (el ciclo nuevo empieza solo)' : ''}.`}</p>`
-        : `<p class="freq">Descanso terminado el ${esc(fmtDate(rw.to))}.</p><div class="acts"><button class="ok" data-next="${p.id}">Empezar un ciclo nuevo hoy</button></div>`}</div>`).join('');
+      ${date <= rw.to ? `<p class="freq wk">Descanso: día ${diffDays(rw.from, date) + 1} de ${rw.days}</p>
+        <p class="freq">Según tu protocolo puedes volver el ${esc(fmtDate(rw.restart))}${p.repeat ? ' (el ciclo nuevo empieza solo)' : ''}.</p>${!p.repeat && date === rw.to ? ask(p, rw.restart) : ''}`
+        : `<p class="freq">Descanso terminado el ${esc(fmtDate(rw.to))}.</p>${ask(p, date)}`}</div>`).join('');
   const pendHTML = pend.length ? `<div class="alert aviso pend-banner"><strong>Tienes ${pend.length} ${pend.length === 1 ? 'toma prevista' : 'tomas previstas'} sin registrar</strong> desde el ${esc(fmtDate(pend[0].date))}. <button class="sec slim" id="pendBtn">Revisar</button></div>` : '';
   const nothing = !ag.slots.length && !ag.weekly.length && !ag.demand.length && !ag.interval.length && !ag.unknown.length && !paused.length && !resting.length;
   view.innerHTML = (embed ? '' : head + pendHTML + runsHTML) + (pausedHTML ? `<h2 class="grp">En pausa</h2>${pausedHTML}` : '') + (restHTML ? `<h2 class="grp">En descanso</h2>${restHTML}` : '') + (nothing ? `<div class="card empty"><p>Nada previsto ${date === t ? 'hoy' : 'este día'}.</p><p><a href="#/biblioteca">Aplicar un protocolo</a></p></div>` : '')
@@ -148,13 +152,17 @@ export async function hoy(view, r, ctx) {
   const again = () => hoy(view, r, ctx);
   const slot = (k) => ag.slots.find((s) => s.key === k);
   view.onclick = async (e) => {
-    const b = e.target.closest('button[data-do], button[data-undo], button[data-feel], button[data-quick], button[data-next], #pendBtn');
+    const b = e.target.closest('button[data-do], button[data-undo], button[data-feel], button[data-quick], button[data-next], button[data-stop], #pendBtn');
     if (!b) return;
     b.disabled = true;
     try {
       if (b.id === 'pendBtn') { await reviewDialog(ctx, pend, L); return again(); }
       if (b.dataset.quick) { await quickDialog(ctx, date, plans, L); return again(); }
-      if (b.dataset.next) { await m.startNextCycle(pid, b.dataset.next, date); toast('Ciclo nuevo empezado'); return again(); }
+      if (b.dataset.next) { const st = b.dataset.start || date; await m.startNextCycle(pid, b.dataset.next, st); toast(st > date ? `Ciclo nuevo desde el ${fmtDate(st)}` : 'Ciclo nuevo empezado'); return again(); }
+      if (b.dataset.stop) {
+        if (await dialog('<form><h2>No seguir con este ciclo</h2><p>El plan se cierra y deja de avisarte. Tus tomas quedan en el historial. Si cambias de idea, puedes volver a aplicarlo desde la Biblioteca.</p><div class="row"><button class="sec">No seguir</button><button type="button" class="ghost" data-close>Cancelar</button></div></form>')) { await m.stopCycle(pid, b.dataset.stop); toast('Ciclo cerrado'); }
+        return again();
+      }
       if (b.dataset.feel) {
         const a = [...ag.slots.map((x) => x.admin), ...ag.weekly.flatMap((x) => x.today), ...ag.interval.flatMap((x) => x.today)].find((x) => x?.id === b.dataset.feel);
         if (a && (await feelDialog(ctx, a))) toast('Guardado');

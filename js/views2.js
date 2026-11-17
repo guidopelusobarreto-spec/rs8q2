@@ -79,8 +79,8 @@ const planForm = (products, p = {}) => `
   ${field('Pauta anotada (texto libre)', `<textarea name="scheduleNote">${esc(p.scheduleNote || '')}</textarea>`)}
   <fieldset><legend>Descanso después del ciclo</legend><div class="grid">${field('Descanso', inp('restN', p.rest?.n ?? '', 'type="number" min="1" step="1"'))}
     ${field('Unidad', `<select name="restUnit">${[['semanas', 'semanas'], ['dias', 'días'], ['meses', 'meses']].map(([k, l]) => opt(k, l, p.rest?.unit || 'semanas')).join('')}</select>`)}</div>
-    <label class="check"><input type="checkbox" name="repeat" ${p.repeat ? 'checked' : ''}>Repetir el ciclo después del descanso (empieza solo)</label>
-    <p class="small muted">Al terminar el ciclo, la app cuenta el descanso y avisa el día antes de volver. Vacío = sin descanso.</p></fieldset>
+    <label class="check"><input type="checkbox" name="repeat" ${p.repeat ? 'checked' : ''}>Empezar el ciclo siguiente solo, sin preguntarme</label>
+    <p class="small muted">Al terminar el ciclo, la app cuenta el descanso y el día antes de volver te pregunta si empiezas otro (o empieza solo si marcas la casilla). Vacío = sin descanso.</p></fieldset>
   ${field('Revisión periódica cada (días)', inp('reviewEveryDays', p.reviewEveryDays ?? '', 'type="number" min="1"'))}
   <div class="grid">${field('Fuente de la información', inp('source', p.source || ''))}${field('Introducido por', inp('enteredBy', p.enteredBy || ''))}</div>
   <fieldset><legend>Alertas</legend>${[['d7', '7 días antes'], ['d2', '2 días antes'], ['d0', 'El día final'], ['overdue', 'Tras vencer'], ['afterEnd', 'Registro posterior al final']].map(([k, l]) => `<label class="check"><input type="checkbox" name="al_${k}" ${p.alerts?.[k] === false ? '' : 'checked'}>${l}</label>`).join('')}</fieldset>
@@ -144,7 +144,7 @@ export async function planDetalle(view, r, ctx) {
         if ((end && t > end) || sw?.after) return 'Terminado';
         return `<strong>${esc(substanceWeekText(sw))}</strong>${pz ? ' · en pausa' : ''}`; })()}</dd>
       ${p.cycleNo > 1 ? `<dt>Ciclo</dt><dd>${p.cycleNo}</dd>` : ''}
-      <dt>Descanso después</dt><dd>${p.rest ? `${esc(restText(p.rest))}${(() => { const rw = restWindow(p, t); return rw ? ` (del ${fmtDate(rw.from)} al ${fmtDate(rw.to)})` : ''; })()} · ${p.repeat ? 'el ciclo se repite solo' : 'no se repite'}` : '—'}</dd>
+      <dt>Descanso después</dt><dd>${p.rest ? `${esc(restText(p.rest))}${(() => { const rw = restWindow(p, t); return rw ? ` (del ${fmtDate(rw.from)} al ${fmtDate(rw.to)})` : ''; })()} · ${p.repeat ? 'el ciclo siguiente empieza solo' : 'al terminar te pregunta si sigues'}` : '—'}</dd>
       <dt>Inicio</dt><dd>${fmtDate(p.start)}</dd><dt>Fin</dt><dd>${end ? fmtDate(end) + (p.end ? '' : ' (calculado por duración)') : 'Sin fecha final registrada'}${shift ? `<br><span class="small">Incluye ${shift} ${shift === 1 ? 'día' : 'días'} de pausa (sin pausas: ${fmtDate(base)})${hasOpenPause(p) ? '. Provisional: supone que reanudas mañana' : ''}.</span>` : ''}</dd>
       <dt>Cantidad del plan</dt><dd>${p.plannedAmount != null ? `${fmtNum(p.plannedAmount, 4)} ${esc(p.plannedUnit)}` : '—'}</dd><dt>Pauta anotada</dt><dd>${esc(p.scheduleNote || '—')}</dd>
       <dt>Fases del protocolo</dt><dd>${p.phases?.length ? p.phases.map((f) => esc(phaseText(f))).join('<br>') : '—'}</dd>

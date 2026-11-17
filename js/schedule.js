@@ -46,7 +46,7 @@ export function parseFrequency(text) {
   const intervalM = s.match(/cada\s+(\d+)\s+(?:a|-|–)\s+(\d+)\s+dias/);
   const perWeekM = s.match(new RegExp(`${N}\\s+(?:vez|veces|aplicacion(?:es)?|tomas?)\\s+(?:a|por|cada)\\s+(?:la\\s+)?semana`));
   const activeM = s.match(/(\d+)\s+dias?\s+activos?/);
-  const everyM = s.match(/cada\s+(\d+)\s+dias/);
+  const everyM = s.match(/cada\s+(\d+)\s+dias/) || (/interdiari|un dia si y (?:un dia )?no|dias alternos/.test(s) ? [null, '2'] : null);
   const daily = perDayM || /\bdiari[ao]s?\b|todos los dias|cada dia\b/.test(s);
   if (perDayM) out.perDay = num(perDayM[1]) || 1;
   if (activeM) { out.kind = 'weekly'; out.perWeek = +activeM[1]; }
@@ -90,6 +90,8 @@ const DONE = new Set(['realizado', 'retrasado']);
 // (p. ej. una toma anotada desde un recordatorio o desde «Registrar» sin elegir plan).
 // Día al que cuenta una toma: el suyo, o la toma prevista que cubre si se adelantó o se retrasó (a.forDate).
 export const when = (a) => a.forDate || a.date;
+// Para un plan concreto: si el día al que la asignaste ya no es día de toma (cambiaste la frecuencia), cuenta su fecha real.
+const whenFor = (a, plan) => (a.forDate && a.forDate !== a.date && !slotsOn(plan, a.forDate).length && ['days', 'daily', 'everyN'].includes(scheduleFor(plan, phaseFor(plan, a.forDate) || {}).kind) ? a.date : when(a));
 const first = (x) => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').split(/[\s(—+-]/)[0];
 const subOf = (pid) => CATALOG.find((c) => c.id === pid)?.substance || '';
 // Si el plan aún no tiene presentación (p. ej. «15 o 30 mg»), cuenta la toma sin plan de la misma sustancia.
@@ -121,7 +123,7 @@ export function slotsOn(plan, date) {
 // Agenda de un día: tomas fijas con su estado, cupos semanales, a demanda y fases sin frecuencia reconocida.
 export function buildAgenda({ plans, admins, date, snoozes = {}, now = new Date().toISOString() }) {
   const out = { date, slots: [], weekly: [], demand: [], interval: [], unknown: [] };
-  const byPlan = (plan, from, to) => admins.filter((a) => belongsTo(a, plan) && when(a) >= from && when(a) <= to && a.status !== 'cancelado');
+  const byPlan = (plan, from, to) => admins.filter((a) => belongsTo(a, plan) && whenFor(a, plan) >= from && whenFor(a, plan) <= to && a.status !== 'cancelado');
   for (const plan of plans) {
     const ph = activePhase(plan, date);
     if (!ph) continue;
@@ -167,7 +169,7 @@ export function adherence(plan, admins, until) {
   const from = plan.trackFrom && plan.trackFrom > plan.start ? plan.trackFrom : plan.start; // ciclos dados de alta tarde
   for (let d = from; d && d <= last; d = addDays(d, 1)) {
     const n = slotsOn(plan, d).length;
-    if (n) { expected += n; done += Math.min(n, mine.filter((a) => when(a) === d).length); }
+    if (n) { expected += n; done += Math.min(n, mine.filter((a) => whenFor(a, plan) === d).length); }
     const ph = activePhase(plan, d);
     if (ph && scheduleFor(plan, ph).kind === 'weekly') {
       const w = weekRange(plan, ph.week);
@@ -199,7 +201,7 @@ export function missingDoses(plan, admins, until) {
       continue;
     }
     const slots = slotsOn(plan, d);
-    const have = mine.filter((a) => when(a) === d).length;
+    const have = mine.filter((a) => whenFor(a, plan) === d).length;
     slots.slice(have).forEach((s) => out.push({ date: d, time: at(sc, s.index), amount, unit: ph.unit }));
   }
   return out;

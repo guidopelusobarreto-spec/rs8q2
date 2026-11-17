@@ -42,7 +42,20 @@ export async function biblioteca(view, r, ctx) {
 
   $('#libFile').addEventListener('change', async (e) => {
     const file = e.target.files[0]; if (!file) return;
-    try { const n = await m.importLibrary(JSON.parse(await file.text()), { replace: $('#libReplace').checked }); toast(`${n} modelos cargados`); biblioteca(view, r, ctx); }
+    try {
+      const n = await m.importLibrary(JSON.parse(await file.text()), { replace: $('#libReplace').checked }); toast(`${n} modelos cargados`);
+      const ch = await m.libraryChanges();
+      if (ch.length) {
+        const fx = (ph) => ph.map((f) => `${f.amount ?? '—'}${f.amountMax != null ? '–' + f.amountMax : ''} ${f.unit} · ${f.frequency}`).join(' / ');
+        await dialog(`<form><h2>Tu protocolo ha cambiado</h2><p class="small">Estos planes en curso se aplicaron con la versión anterior. Si los actualizas, se conservan tus tomas, la fecha de inicio, las pausas y las notas.</p>
+          ${ch.map((c, i) => `<label class="check"><input type="checkbox" name="u" value="${i}" data-multi checked><span><strong>${esc(c.plan.name || c.plan.substance || 'plan')}</strong> (${esc(c.profile)})<br>
+            <span class="small">Antes: ${esc(fx(c.plan.phases || []))}<br>Ahora: ${esc(fx(c.phases))}</span></span></label>`).join('')}
+          <div class="row"><button class="ok">Actualizar los marcados</button><button type="button" class="ghost" data-close>Dejarlos como están</button></div></form>`, {
+          onSubmit: async (d) => { for (const i of (d.u || []).map(Number)) await m.applyLibraryChange(ch[i].profileId, ch[i].plan.id, ch[i].phases, ch[i].rest); return true; },
+        }) && toast('Planes actualizados');
+      }
+      biblioteca(view, r, ctx);
+    }
     catch (err) { toast('No se pudo cargar: ' + err.message); }
   });
   $('#libExp').addEventListener('click', async () => download(`biblioteca-protocolos-${todayISO()}.json`, JSON.stringify(await m.exportLibrary(), null, 1), 'application/json'));

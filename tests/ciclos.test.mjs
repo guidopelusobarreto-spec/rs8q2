@@ -60,7 +60,7 @@ test('sin repetir: no crea ciclo y avisa de que terminó el descanso', async () 
   const { m, a } = await mk('2027-01-25');
   await kiss(m, a, { repeat: false });
   assert.equal((await m.ensureCycles(a.id)).length, 0);
-  assert.match((await m.alerts(a.id)).map((x) => x.text).join('|'), /descanso terminado desde el 21\/01\/2027/);
+  assert.match((await m.alerts(a.id)).map((x) => x.text).join('|'), /Tu descanso de «Kiss» terminó; podías empezar el 21\/01\/2027\. Decide en Hoy/);
 });
 
 test('calendario: marca el descanso y el ciclo nuevo una sola vez', async () => {
@@ -75,10 +75,47 @@ test('aplicar desde la biblioteca guarda el descanso de tu texto', async () => {
   const { m, a } = await mk('2026-11-17');
   await m.store.put('templates', { id: 'k', name: 'Kiss', sex: 'hombre', durationUnit: 'semanas', restText: 'Descanso obligatorio de 4 semanas completas.', items: [{ substance: 'Kisspeptin-10', productId: 'kiss10', phases: [ph(1, 6, 150)] }] });
   const [p] = await m.applyTemplate(a.id, 'k', { start: '2026-11-12', duration: 6 });
-  assert.deepEqual([p.rest, p.repeat], [{ n: 4, unit: 'semanas' }, true]);
+  assert.deepEqual([p.rest, p.repeat], [{ n: 4, unit: 'semanas' }, false], 'por defecto pregunta antes del ciclo siguiente');
 });
 
 test('pendientes: no reclama lo anterior a «contar desde»', () => {
   const p = { id: 'p', productId: 'x', start: '2026-11-01', duration: 4, durationUnit: 'semanas', trackFrom: '2026-11-10', phases: [ph(1, 4, 1)] };
   assert.equal(missingDoses(p, [], '2026-11-12').length, 3);
+});
+
+test('preguntar: la víspera propone la fecha; «No seguir» cierra; los planes de la v19 pasan a preguntar', async () => {
+  const { m, a } = await mk('2027-01-20');
+  const p = await kiss(m, a, { repeat: false });
+  assert.match((await m.alerts(a.id)).map((x) => x.text).join('|'), /Mañana termina tu descanso de «Kiss»\. Según tu protocolo puedes empezar un nuevo ciclo el 21\/01\/2027/);
+  const np = await m.startNextCycle(a.id, p.id, '2027-01-21');
+  assert.deepEqual([np.start, np.cycleNo], ['2027-01-21', 2]);
+  await m.stopCycle(a.id, np.id);
+  assert.equal((await m.store.get('plans', np.id)).closed, true);
+  const { m: m2, a: a2 } = await mk('2026-11-17');
+  const old = await kiss(m2, a2, { repeat: true, templateId: 'kiss-h', enteredBy: 'Biblioteca de protocolos' });
+  await m2.ensureCycles(a2.id);
+  assert.equal((await m2.store.get('plans', old.id)).repeat, false);
+});
+
+test('interdiario desde el jueves 12-nov: 12, 14, 16…; una toma reasignada a un día que ya no toca cuenta en su fecha real', async () => {
+  const { buildAgenda, slotsOn } = await import('../js/schedule.js');
+  const p = { id: 'k', productId: 'kiss10', start: '2026-11-12', duration: 6, durationUnit: 'semanas', phases: [ph(1, 6, 150, '1 vez cada 2 días (interdiario), a las 21:30 (SC)')] };
+  assert.deepEqual(['2026-11-12', '2026-11-13', '2026-11-14', '2026-11-22', '2026-12-22', '2026-12-23'].map((d) => slotsOn(p, d).length), [1, 0, 1, 1, 1, 0]);
+  const a14 = { id: 'x', planId: 'k', productId: 'kiss10', date: '2026-11-14', time: '21:30', status: 'realizado', forDate: '2026-11-13' };
+  assert.equal(buildAgenda({ plans: [p], admins: [a14], date: '2026-11-14' }).slots[0].status, 'done');
+});
+
+test('biblioteca nueva: detecta y actualiza el plan en curso conservando tomas e inicio', async () => {
+  const { m, a } = await mk('2026-11-17');
+  await m.store.put('templates', { id: 'kiss-h', name: 'Kiss', sex: 'hombre', durationUnit: 'semanas', restText: 'Descanso obligatorio de 4 semanas completas.', items: [{ substance: 'Kisspeptin-10', productId: 'kiss10', phases: [ph(1, 6, 150, '3 veces por semana (lunes, miércoles y viernes, SC)')] }] });
+  const [p] = await m.applyTemplate(a.id, 'kiss-h', { start: '2026-11-12', duration: 6 });
+  const { admin } = await m.addAdministration(a.id, { productId: 'kiss10', planId: p.id, date: '2026-11-12', time: '21:30', amount: 150, unit: 'u', status: 'realizado' });
+  assert.equal((await m.libraryChanges()).length, 0);
+  await m.store.put('templates', { id: 'kiss-h', name: 'Kiss', sex: 'hombre', durationUnit: 'semanas', restText: 'Descanso obligatorio de 4 semanas completas.', items: [{ substance: 'Kisspeptin-10', productId: 'kiss10', phases: [ph(1, 6, 150, '1 vez cada 2 días (interdiario), a las 21:30 (SC)')] }] });
+  const ch = await m.libraryChanges();
+  assert.equal(ch.length, 1);
+  const u = await m.applyLibraryChange(a.id, p.id, ch[0].phases, ch[0].rest);
+  assert.deepEqual([u.start, u.phases[0].frequency], ['2026-11-12', '1 vez cada 2 días (interdiario), a las 21:30 (SC)']);
+  assert.equal((await m.store.get('administrations', admin.id)).planId, p.id);
+  assert.equal((await m.libraryChanges()).length, 0);
 });

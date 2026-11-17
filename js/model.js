@@ -475,6 +475,11 @@ export class Model {
     await this.updatePlan(profileId, p.id, { nextPlanId: np.id, closed: true });
     return this.store.get('plans', np.id);
   }
+  // No seguir con el ciclo: el plan se cierra y deja de avisar. Queda en el historial.
+  async stopCycle(profileId, planId) {
+    const p = await this._plan(profileId, planId);
+    return this.updatePlan(profileId, planId, { repeat: false, closed: true, notes: [p.notes, `No sigues con este ciclo (decidido el ${esD(this.today())})`].filter(Boolean).join('\n') });
+  }
   async startNextCycle(profileId, planId, start = this.today()) {
     const p = await this._plan(profileId, planId);
     must(isDate(start), 'Fecha no válida');
@@ -485,6 +490,11 @@ export class Model {
   // y el anterior se cierra. Es idempotente; se llama al abrir Hoy, el calendario y los avisos.
   async ensureCycles(profileId) {
     const t = this.today(), made = [];
+    // v20: el ciclo siguiente ya no empieza solo por defecto; la app pregunta. Se aplica una vez a los planes creados con la v19.
+    if (!(await this.store.get('settings', 'mig-v20-repeat'))) {
+      for (const pr of await this.profiles()) for (const p of await this.list('plans', pr.id)) if (p.repeat === true && !p.closed && p.templateId && p.enteredBy === 'Biblioteca de protocolos') await this.updatePlan(pr.id, p.id, { repeat: false });
+      await this.store.put('settings', { id: 'mig-v20-repeat', at: this.stamp() });
+    }
     for (let p of await this.list('plans', profileId)) {
       for (let i = 0; i < 24 && p && !p.closed && p.repeat && !p.nextPlanId; i++) {
         const rw = restWindow(p, t);
@@ -611,10 +621,10 @@ export class Model {
         if (addDays(end, -1) === t) pushOnce(p, 'aviso', `Mañana es el último día del ciclo de «${nm}». Después, descanso de ${restText(p.rest)} (hasta el ${esD(rw.to)}).`, 'ciclo', 'Mañana termina un ciclo');
         if (end === t) pushOnce(p, 'aviso', `Hoy es el último día del ciclo de «${nm}». Descanso del ${esD(rw.from)} al ${esD(rw.to)}.`, 'ciclo', 'Hoy termina un ciclo');
         if (t >= rw.from && t <= rw.to) {
-          if (addDays(rw.restart, -1) === t) pushOnce(p, 'aviso', p.repeat ? `Mañana (${esD(rw.restart)}) empiezas un nuevo ciclo de «${nm}».` : `Mañana termina el descanso de «${nm}».`, 'ciclo', p.repeat ? 'Mañana empieza un ciclo nuevo' : 'Mañana termina un descanso');
+          if (addDays(rw.restart, -1) === t) pushOnce(p, 'aviso', p.repeat ? `Mañana (${esD(rw.restart)}) empiezas un nuevo ciclo de «${nm}».` : `Mañana termina tu descanso de «${nm}». Según tu protocolo puedes empezar un nuevo ciclo el ${esD(rw.restart)}: decide en Hoy si sigues.`, 'ciclo', p.repeat ? 'Mañana empieza un ciclo nuevo' : 'Mañana termina un descanso: decide si sigues');
           else pushOnce(p, 'info', `«${nm}»: descanso, día ${diffDays(rw.from, t) + 1} de ${rw.days} (vuelves el ${esD(rw.restart)}).`, 'descanso');
         }
-        if (!p.repeat && t >= rw.restart) pushOnce(p, 'info', `«${nm}»: descanso terminado desde el ${esD(rw.restart)}. Empieza un nuevo ciclo o cierra el plan.`, 'ciclo', 'Descanso terminado');
+        if (!p.repeat && t >= rw.restart) pushOnce(p, 'aviso', `Tu descanso de «${nm}» terminó; podías empezar el ${esD(rw.restart)}. Decide en Hoy si empiezas un nuevo ciclo o no sigues.`, 'ciclo', 'Decide si empiezas un nuevo ciclo');
       }
       if (p.mode === 'pendiente') pushOnce(p, 'aviso', `«${nm}»: duración pendiente de confirmar (sin fecha final)`);
       if (end && !rw) {
@@ -827,6 +837,24 @@ export class Model {
       substances: data.sustancias || [], texts: data.textos || {}, original: data.textoOriginal || '' });
     return v.templates.length;
   }
+  // Tras cargar una biblioteca: planes en curso cuyo protocolo ha cambiado (fases distintas para la misma sustancia).
+  async libraryChanges() {
+    const out = [];
+    for (const pr of await this.profiles()) for (const p of await this.list('plans', pr.id)) {
+      if (p.closed || !p.templateId) continue;
+      const t = await this.store.get('templates', p.templateId);
+      const it = t?.items?.find((x) => x.substance === p.substance) || (t?.items?.length === 1 ? t.items[0] : null);
+      if (!it || !it.phases?.length) continue;
+      const strip = (ph) => JSON.stringify((ph || []).map(({ fromWeek, toWeek, amount, amountMax, unit, frequency }) => ({ fromWeek, toWeek, amount, amountMax, unit, frequency })));
+      if (strip(p.phases) !== strip(it.phases)) out.push({ profileId: pr.id, profile: pr.name, plan: p, phases: it.phases, rest: parseRest(t.restText) });
+    }
+    return out;
+  }
+  // Pasa las fases nuevas al plan en curso; se conservan las tomas, la fecha de inicio, las pausas y las notas.
+  async applyLibraryChange(profileId, planId, phases, rest) {
+    await this._plan(profileId, planId);
+    return this.updatePlan(profileId, planId, { phases, ...(rest ? { rest } : {}) });
+  }
   async exportLibrary() {
     const info = await this.libraryInfo();
     return { app: 'registro-sustancias', tipo: 'biblioteca-protocolos', version: 1, titulo: info.title, exportedAt: this.stamp(),
@@ -894,7 +922,7 @@ export class Model {
       out.push(await this.addPlan(profileId, { name: t.items.length > 1 ? `${t.name} — ${it.substance}` : t.name, productId: products[i] ?? it.productId ?? '',
         mode: dur ? 'duracion' : 'pendiente', substance: it.substance, start: d.start, duration: dur, durationUnit: unit, phases: it.phases,
         source: `Biblioteca: ${t.name}${t.source ? ' · ' + t.source : ''}`, enteredBy: 'Biblioteca de protocolos', templateId: t.id, notes, ficha: it.ficha || '',
-        rest: parseRest(t.restText), repeat: !!parseRest(t.restText) }));
+        rest: parseRest(t.restText), repeat: false })); // al terminar el descanso, la app pregunta
     }
     return out;
   }
