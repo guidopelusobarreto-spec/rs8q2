@@ -22,6 +22,8 @@ La frecuencia de cada fase se lee del texto escrito por el usuario («3 veces po
 
 **Cambiar de protocolo** (Cronograma o plan): el nuevo empieza en la misma fecha (las semanas que llevas cuentan); las tomas, pausas, notas y correcciones de frecuencia de cada sustancia pasan al plan nuevo; eliges qué se cierra. **Frecuencias**: «cada 10 a 14 días» (ventana desde tu última toma) y «1 a 2 veces al día» (la segunda es opcional). **Revisiones**: el informe cuenta también las tomas sin plan, incluye cómo te sentó, y las fechas y avisos (también los periódicos, en cualquier plan) no cuentan los días en pausa.
 
+**Registro práctico (v19)**: tocar un día del calendario muestra sus tomas con Hecho / Otro día o cantidad / Omitir; «＋ Registrar otra toma» anota cualquier plan con su dosis; en Hoy, «Tienes N tomas sin registrar · Revisar» permite marcar de una vez las tomadas o no tomadas. **Ciclos con descanso**: el descanso se lee de tu texto («Descanso obligatorio de 4 semanas»); al terminar el ciclo la app cuenta el descanso, avisa el día antes del último día, el último día y el día antes de volver, y el ciclo siguiente empieza solo (se puede cambiar en el plan). Cada toma muestra «Semana N de M · día D».
+
 **Sin cobertura o con mala señal**: el service worker espera a la red como máximo 3 s si ya hay copia; después abre desde la caché y actualiza en segundo plano.
 
 ## Estructura
@@ -38,8 +40,8 @@ La frecuencia de cada fase se lee del texto escrito por el usuario («3 veces po
 - `js/views1.js`, `js/views2.js`, `js/ui.js`, `js/notify.js` — interfaz, PIN, notificaciones, .ics
 
 ## Pruebas
-- `npm test` — 59 pruebas de la lógica (Node 22, sin dependencias); 2 necesitan `LIB_FILE=<biblioteca.json>`.
-- `LIB_FILE=<biblioteca.json> python3 -I tests/e2e.py http://localhost:8765/` — 135 comprobaciones de aceptación (con la biblioteca v4) en Chromium (Playwright), a 320 y 360 px.
+- `npm test` — 67 pruebas de la lógica (Node 22, sin dependencias); 2 necesitan `LIB_FILE=<biblioteca.json>`.
+- `LIB_FILE=<biblioteca.json> python3 -I tests/e2e.py http://localhost:8765/` — 145 comprobaciones de aceptación (con la biblioteca v4) en Chromium (Playwright), a 320 y 360 px.
 - `python3 -I tests/e2e_red_lenta.py .` — arranque con la red a 8 s (debe abrir en menos de 6 s).
 - `python3 -I tests/e2e_actualizacion.py .` — con «Cache-Control: max-age=600» (como GitHub Pages), una versión nueva se ve al volver a abrir la app.
 

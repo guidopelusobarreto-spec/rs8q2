@@ -1,8 +1,8 @@
 // Pantalla Hoy, cronograma de protocolos, fichas maquetadas, texto original como documento y menú «Más».
 import { esc, $, $$, toast, dialog, fmtDate, field, inp } from './ui.js';
-import { todayISO, planEnd, planBaseEnd, diffDays, addDays, planWeek, pausedOn, pausesOf, notesFor } from './model.js';
+import { todayISO, planEnd, planBaseEnd, diffDays, addDays, planWeek, pausedOn, pausesOf, notesFor, restWindow, restText } from './model.js';
 import { pauseText, pauseDialog, resumeDialog } from './pausas.js';
-import { feelChip, feelDialog, guideBox, startDialog, guideContext, guideHTML, switchDialog } from './ajustes.js';
+import { feelChip, feelDialog, guideBox, startDialog, guideContext, guideHTML, switchDialog, pendingDoses, reviewDialog, quickDialog } from './ajustes.js';
 import { MOMENTS, scheduleText, amountText, adherence, totalWeeks, substanceWeek, substanceWeekText } from './schedule.js';
 import { fmtDoc, fichaHTML, splitFichas, cleanInline } from './text.js';
 import { productOptions, exceedFlow } from './views1.js';
@@ -71,7 +71,7 @@ export async function hoy(view, r, ctx) {
     return;
   }
   if (!ctx.profileId) { view.innerHTML = '<div class="card"><p>Elige una persona arriba.</p></div>'; return; }
-  const pid = ctx.profileId, t = todayISO(), date = r.query.d || t;
+  const pid = ctx.profileId, t = todayISO(), date = r.query.d || t, embed = !!r.query.embed;
   const [ag, plans] = [await m.agenda(pid, date), await m.list('plans', pid)];
   const labels = await m.planLabels(plans);
   const L = (p) => labels.get(p.id);
@@ -80,6 +80,10 @@ export async function hoy(view, r, ctx) {
   const paused = pausedGroups(runs, date);
   const guide = await guideContext(ctx, plans), proto = (p) => guideHTML(guide(p));
   const doneN = ag.slots.filter((s) => s.status === 'done').length;
+  // Ciclos en descanso: cuenta el descanso y avisa de la vuelta.
+  const resting = plans.filter((p) => !p.closed).map((p) => ({ p, rw: restWindow(p, t) })).filter((x) => x.rw && date >= x.rw.from && (date <= x.rw.to || !x.p.repeat));
+  // Tomas previstas sin registrar (últimos 90 días), solo en Hoy.
+  const pend = !embed && date === t ? await pendingDoses(ctx, plans) : [];
   const head = `<div class="today-head"><h1>${date === t ? 'Hoy' : esc(longDate(date).replace(/^./, (c) => c.toUpperCase()))}</h1>
       ${ag.slots.length ? `<span class="chip ${doneN === ag.slots.length ? 'ok' : ''}">${doneN} de ${ag.slots.length} hechas</span>` : ''}</div>
     <div class="daynav noprint"><a class="btn sec slim" href="#/?d=${addDays(date, -1)}" aria-label="Día anterior">‹</a><span class="muted">${esc(longDate(date))}</span>${date !== t ? '<a class="btn sec slim" href="#/">Hoy</a>' : ''}<a class="btn sec slim" href="#/?d=${addDays(date, 1)}" aria-label="Día siguiente">›</a></div>`;
@@ -132,18 +136,25 @@ export async function hoy(view, r, ctx) {
       <p class="freq">${esc(pauseText(g.pause))}${g.pause.note ? ` · ${esc(g.pause.note)}` : ''}</p>${g.plans.length > 1 ? `<p class="freq">${g.plans.map((p) => esc(L(p))).join(', ')}</p>` : ''}
       ${guideBox([...new Map(g.plans.flatMap((p) => notesFor(p, date)).map((n) => [n.text, n])).values()])}
       <div class="acts">${!g.pause.to && date === t ? `<button class="ok" data-do="resume" data-i="${i}">Reanudar hoy</button>` : ''}<a class="btn sec" href="#/plan/${g.plans[0].id}">Ver el plan</a></div></div>`).join('');
-  const nothing = !ag.slots.length && !ag.weekly.length && !ag.demand.length && !ag.interval.length && !ag.unknown.length && !paused.length;
-  view.innerHTML = head + runsHTML + (pausedHTML ? `<h2 class="grp">En pausa</h2>${pausedHTML}` : '') + (nothing ? `<div class="card empty"><p>Nada previsto ${date === t ? 'hoy' : 'este día'}.</p><p><a href="#/biblioteca">Aplicar un protocolo</a> · <a href="#/registro">Registrar una toma suelta</a></p></div>` : '')
+  const restHTML = resting.map(({ p, rw }) => `<div class="dose paused" style="--h:${hueFor(L(p))}"><div class="top"><span class="name">${esc(L(p))}</span><span class="chip">Descanso</span></div>
+      ${date <= rw.to ? `<p class="freq wk">Descanso: día ${diffDays(rw.from, date) + 1} de ${rw.days}</p><p class="freq">${date === rw.to ? (p.repeat ? '<strong>Mañana empiezas un nuevo ciclo.</strong>' : '<strong>Mañana termina el descanso.</strong>') : `Vuelves el ${esc(fmtDate(rw.restart))}${p.repeat ? ' (el ciclo nuevo empieza solo)' : ''}.`}</p>`
+        : `<p class="freq">Descanso terminado el ${esc(fmtDate(rw.to))}.</p><div class="acts"><button class="ok" data-next="${p.id}">Empezar un ciclo nuevo hoy</button></div>`}</div>`).join('');
+  const pendHTML = pend.length ? `<div class="alert aviso pend-banner"><strong>Tienes ${pend.length} ${pend.length === 1 ? 'toma prevista' : 'tomas previstas'} sin registrar</strong> desde el ${esc(fmtDate(pend[0].date))}. <button class="sec slim" id="pendBtn">Revisar</button></div>` : '';
+  const nothing = !ag.slots.length && !ag.weekly.length && !ag.demand.length && !ag.interval.length && !ag.unknown.length && !paused.length && !resting.length;
+  view.innerHTML = (embed ? '' : head + pendHTML + runsHTML) + (pausedHTML ? `<h2 class="grp">En pausa</h2>${pausedHTML}` : '') + (restHTML ? `<h2 class="grp">En descanso</h2>${restHTML}` : '') + (nothing ? `<div class="card empty"><p>Nada previsto ${date === t ? 'hoy' : 'este día'}.</p><p><a href="#/biblioteca">Aplicar un protocolo</a></p></div>` : '')
     + groups.map(([l, a]) => `<h2 class="grp">${esc(l)}</h2>${a.map(card).join('')}`).join('')
     + (weekly ? `<h2 class="grp">Esta semana</h2>${weekly}` : '') + (interval ? `<h2 class="grp">Cada varios días</h2>${interval}` : '') + (demand ? `<h2 class="grp">A demanda</h2>${demand}` : '') + (unknown ? `<h2 class="grp">Revisar</h2>${unknown}` : '')
-    + '<p class="noprint" style="margin-top:1.2rem"><a class="btn sec" href="#/registro">＋ Registrar una toma suelta</a></p>';
+    + '<p class="noprint" style="margin-top:1.2rem"><button class="sec" data-quick="1">＋ Registrar otra toma</button> <a class="small" href="#/registro">Formulario completo</a></p>';
   const again = () => hoy(view, r, ctx);
   const slot = (k) => ag.slots.find((s) => s.key === k);
   view.onclick = async (e) => {
-    const b = e.target.closest('button[data-do], button[data-undo], button[data-feel]');
+    const b = e.target.closest('button[data-do], button[data-undo], button[data-feel], button[data-quick], button[data-next], #pendBtn');
     if (!b) return;
     b.disabled = true;
     try {
+      if (b.id === 'pendBtn') { await reviewDialog(ctx, pend, L); return again(); }
+      if (b.dataset.quick) { await quickDialog(ctx, date, plans, L); return again(); }
+      if (b.dataset.next) { await m.startNextCycle(pid, b.dataset.next, date); toast('Ciclo nuevo empezado'); return again(); }
       if (b.dataset.feel) {
         const a = [...ag.slots.map((x) => x.admin), ...ag.weekly.flatMap((x) => x.today), ...ag.interval.flatMap((x) => x.today)].find((x) => x?.id === b.dataset.feel);
         if (a && (await feelDialog(ctx, a))) toast('Guardado');

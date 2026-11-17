@@ -98,6 +98,24 @@ export function notesFor(plan, date) {
 // Grupo de un plan: el protocolo aplicado junto (mismo nombre de biblioteca y misma fecha de inicio) o el plan suelto.
 export const groupKey = (p) => (libraryName(p) ? `${libraryName(p)}|${p.start}` : p.id);
 export const groupName = (p) => libraryName(p) || p.name || PLAN_MODES[p.mode] || 'plan';
+// ── Descanso entre ciclos (tu texto: «Descanso obligatorio de 4 semanas…») ──
+const normTxt0 = (x) => String(x || '').toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+export function parseRest(text) {
+  const m = normTxt0(text).match(/descanso[^.;]*?(\d+)(?:\s*(?:a|-|–)\s*(\d+))?\s*(semanas?|meses|mes|dias?)/);
+  if (!m) return null;
+  return { n: +m[1], unit: /^sem/.test(m[3]) ? 'semanas' : /^mes/.test(m[3]) ? 'meses' : 'dias' };
+}
+export const restText = (r) => (r ? `${r.n} ${r.unit === 'dias' ? (r.n === 1 ? 'día' : 'días') : r.unit === 'meses' ? (r.n === 1 ? 'mes' : 'meses') : r.n === 1 ? 'semana' : 'semanas'}` : '');
+// Ventana de descanso tras el fin del plan: { from, to, restart, days }. Sin fin o sin descanso → null.
+export function restWindow(p, today) {
+  const r = p?.rest;
+  if (!r || !(r.n > 0)) return null;
+  const end = planEnd(p, today);
+  if (!end) return null;
+  const from = addDays(end, 1);
+  const to = r.unit === 'meses' ? addDays(addMonths(from, r.n), -1) : addDays(from, r.n * (r.unit === 'semanas' ? 7 : 1) - 1);
+  return { from, to, restart: addDays(to, 1), days: diffDays(from, to) + 1 };
+}
 export function runSiblings(plans, plan) {
   const lib = libraryName(plan);
   if (!lib) return [plan];
@@ -286,7 +304,9 @@ export class Model {
       duration: num(d.duration), durationUnit: d.durationUnit || 'dias', plannedAmount: num(d.plannedAmount), plannedUnit: d.plannedUnit || '', phases: parsePhases(d.phases),
       scheduleNote: d.scheduleNote || '', reviewEveryDays: num(d.reviewEveryDays), source: d.source || '', enteredBy: d.enteredBy || '',
       alerts: { d7: true, d2: true, d0: true, overdue: true, afterEnd: true, ...(d.alerts || {}) }, notes: d.notes || '',
-      templateId: d.templateId || '', substance: d.substance || '', ficha: d.ficha ? String(d.ficha) : '' };
+      templateId: d.templateId || '', substance: d.substance || '', ficha: d.ficha ? String(d.ficha) : '',
+      rest: d.rest && Number(d.rest.n) > 0 ? { n: Number(d.rest.n), unit: ['dias', 'semanas', 'meses'].includes(d.rest.unit) ? d.rest.unit : 'semanas' } : null,
+      repeat: !!d.repeat, cycleNo: num(d.cycleNo) || 1, nextPlanId: '' };
     rec.computedEnd = planEnd(rec);
     return this._add('plans', profileId, rec);
   }
@@ -447,6 +467,36 @@ export class Model {
     return created.map((x) => x.id);
   }
 
+  // Ciclo siguiente: copia del plan (fases, frecuencia corregida, notas, descanso) desde «start»; el anterior se cierra.
+  async _nextCycle(profileId, p, start) {
+    const nm = String(p.name || '').replace(/ · ciclo \d+$/, ''), n = (p.cycleNo || 1) + 1;
+    const np = await this.addPlan(profileId, { ...p, name: nm ? `${nm} · ciclo ${n}` : '', start, end: p.end ? addDays(start, diffDays(p.start, p.end)) : '', cycleNo: n });
+    await this.updatePlan(profileId, np.id, { freqOverrides: p.freqOverrides || {}, guideNotes: p.guideNotes || [] });
+    await this.updatePlan(profileId, p.id, { nextPlanId: np.id, closed: true });
+    return this.store.get('plans', np.id);
+  }
+  async startNextCycle(profileId, planId, start = this.today()) {
+    const p = await this._plan(profileId, planId);
+    must(isDate(start), 'Fecha no válida');
+    must(!p.nextPlanId, 'Este ciclo ya tiene uno siguiente');
+    return this._nextCycle(profileId, p, start);
+  }
+  // Ciclos que se repiten: el día de vuelta tras el descanso se crea el ciclo siguiente (mismas fases, tomas nuevas)
+  // y el anterior se cierra. Es idempotente; se llama al abrir Hoy, el calendario y los avisos.
+  async ensureCycles(profileId) {
+    const t = this.today(), made = [];
+    for (let p of await this.list('plans', profileId)) {
+      for (let i = 0; i < 24 && p && !p.closed && p.repeat && !p.nextPlanId; i++) {
+        const rw = restWindow(p, t);
+        if (!rw || rw.restart > t) break;
+        const np = await this._nextCycle(profileId, p, rw.restart);
+        made.push(np.id);
+        p = np;
+      }
+    }
+    return made;
+  }
+
   async markReviewDone(profileId, planId, date) {
     const p = await this.store.get('plans', planId);
     must(p && p.profileId === profileId, 'Plan inexistente o de otro perfil');
@@ -550,13 +600,24 @@ export class Model {
     const push = (level, text, ref) => out.push({ level, text, ref, profileId });
     // Avisos de plan: uno por protocolo aplicado junto (no uno por sustancia) y nunca de planes cerrados.
     const seen = new Set();
-    const pushOnce = (p, level, text) => { const k = `${groupKey(p)}|${text}`; if (!seen.has(k)) { seen.add(k); push(level, text, p.id); } };
+    const pushOnce = (p, level, text, kind = '', short = '') => { const k = `${groupKey(p)}|${text}`; if (!seen.has(k)) { seen.add(k); out.push({ level, text, ref: p.id, profileId, kind, short }); } };
+    await this.ensureCycles(profileId);
     for (const p of await this.list('plans', profileId)) {
       const end = planEnd(p);
       if (p.closed) continue;
-      const nm = groupName(p);
+      const nm = groupName(p), rw = restWindow(p, t);
+      // Ciclo con descanso: avisos de fin, descanso y vuelta (en lugar de «fecha final vencida»).
+      if (rw) {
+        if (addDays(end, -1) === t) pushOnce(p, 'aviso', `Mañana es el último día del ciclo de «${nm}». Después, descanso de ${restText(p.rest)} (hasta el ${esD(rw.to)}).`, 'ciclo', 'Mañana termina un ciclo');
+        if (end === t) pushOnce(p, 'aviso', `Hoy es el último día del ciclo de «${nm}». Descanso del ${esD(rw.from)} al ${esD(rw.to)}.`, 'ciclo', 'Hoy termina un ciclo');
+        if (t >= rw.from && t <= rw.to) {
+          if (addDays(rw.restart, -1) === t) pushOnce(p, 'aviso', p.repeat ? `Mañana (${esD(rw.restart)}) empiezas un nuevo ciclo de «${nm}».` : `Mañana termina el descanso de «${nm}».`, 'ciclo', p.repeat ? 'Mañana empieza un ciclo nuevo' : 'Mañana termina un descanso');
+          else pushOnce(p, 'info', `«${nm}»: descanso, día ${diffDays(rw.from, t) + 1} de ${rw.days} (vuelves el ${esD(rw.restart)}).`, 'descanso');
+        }
+        if (!p.repeat && t >= rw.restart) pushOnce(p, 'info', `«${nm}»: descanso terminado desde el ${esD(rw.restart)}. Empieza un nuevo ciclo o cierra el plan.`, 'ciclo', 'Descanso terminado');
+      }
       if (p.mode === 'pendiente') pushOnce(p, 'aviso', `«${nm}»: duración pendiente de confirmar (sin fecha final)`);
-      if (end) {
+      if (end && !rw) {
         const left = diffDays(t, end);
         if (p.alerts.d7 && left === 7) pushOnce(p, 'aviso', `${END_ALERT_TEXT} «${nm}» (faltan 7 días: ${end})`);
         if (p.alerts.d2 && left === 2) pushOnce(p, 'aviso', `${END_ALERT_TEXT} «${nm}» (faltan 2 días: ${end})`);
@@ -598,9 +659,10 @@ export class Model {
     const add = (date, type, text, ref, time = '') => { if (date >= from && date <= to) items.push({ date, time, type, text, ref }); };
     const name = async (id) => (await this.product(id))?.substance || '';
     for (const r of await this.list('reminders', profileId)) for (const o of occurrences(r, from, to)) add(o.date, 'recordatorio', r.label, r.id, o.time);
-    for (const a of await this.list('administrations', profileId)) add(a.date, 'registro', `${await name(a.productId)} — ${ADMIN_STATUS[a.status]}${a.amount != null ? ` (${a.amount} ${a.unit})` : ''}${a.forDate ? ` · cuenta como la prevista del ${esD(a.forDate)}` : ''}`, a.id, a.time);
+    for (const a of await this.list('administrations', profileId)) add(a.date, a.status === 'cancelado' ? 'anulado' : 'registro', `${await name(a.productId)} — ${ADMIN_STATUS[a.status]}${a.amount != null ? ` (${a.amount} ${a.unit})` : ''}${a.forDate ? ` · cuenta como la prevista del ${esD(a.forDate)}` : ''}`, a.id, a.time);
     // Un protocolo aplicado junto lleva una sola marca de inicio, fin, pausa y revisión (no una por sustancia).
     // Los planes cerrados conservan su inicio y su fin como historia, pero ya no generan revisiones.
+    await this.ensureCycles(profileId);
     const seen = new Set();
     const once = (p, date, type, text) => { const k = `${groupKey(p)}|${date}|${type}|${text}`; if (!seen.has(k)) { seen.add(k); add(date, type, text, p.id); } };
     for (const p of await this.list('plans', profileId)) {
@@ -608,6 +670,8 @@ export class Model {
       once(p, p.start, kind, `Inicio: ${nm}`);
       if (end) once(p, end, kind, `Fin: ${nm}`);
       if (p.closed) continue;
+      const rw = restWindow(p, this.today());
+      if (rw) { once(p, rw.from, 'descanso', `Descanso: ${nm} (hasta el ${esD(rw.to)})`); once(p, rw.restart, 'ciclo', p.repeat ? `Nuevo ciclo: ${nm}` : `Fin del descanso: ${nm}`); }
       for (const x of pausesOf(p)) {
         once(p, x.from, 'descanso', `Pausa: ${nm}`);
         if (x.to) once(p, addDays(x.to, 1), 'ciclo', `Reanuda: ${nm}`);
@@ -656,6 +720,7 @@ export class Model {
   }
   // ── pantalla Hoy ──
   async agenda(profileId, date = this.today()) {
+    await this.ensureCycles(profileId);
     const sn = await this.store.get('settings', 'snooze-' + profileId);
     return buildAgenda({ plans: await this.list('plans', profileId), admins: await this.list('administrations', profileId), date, snoozes: sn?.map || {}, now: this.now().toISOString() });
   }
@@ -828,7 +893,8 @@ export class Model {
       const notes = [t.route && `Vía: ${t.route}`, t.durationText && `Duración del protocolo: ${t.durationText}`, t.restText && `Descanso / después: ${t.restText}`, it.notes, t.notes].filter(Boolean).join('\n');
       out.push(await this.addPlan(profileId, { name: t.items.length > 1 ? `${t.name} — ${it.substance}` : t.name, productId: products[i] ?? it.productId ?? '',
         mode: dur ? 'duracion' : 'pendiente', substance: it.substance, start: d.start, duration: dur, durationUnit: unit, phases: it.phases,
-        source: `Biblioteca: ${t.name}${t.source ? ' · ' + t.source : ''}`, enteredBy: 'Biblioteca de protocolos', templateId: t.id, notes, ficha: it.ficha || '' }));
+        source: `Biblioteca: ${t.name}${t.source ? ' · ' + t.source : ''}`, enteredBy: 'Biblioteca de protocolos', templateId: t.id, notes, ficha: it.ficha || '',
+        rest: parseRest(t.restText), repeat: !!parseRest(t.restText) }));
     }
     return out;
   }

@@ -229,3 +229,10 @@ details.proto > summary { cursor: pointer; color: var(--accent); font-weight: 70
 details.proto p { margin: .3rem 0; } details.proto .doc-list { margin: .2rem 0 .4rem 1.1rem; padding: 0; }
 #protocolo details.proto > summary { color: var(--ink); }
 .dose .freq.wk { color: var(--ink); font-weight: 700; }
+/* Calendario: anulados en gris; pendientes */
+.t-anulado { background: var(--muted); opacity: .6; }
+.pend-banner { display: flex; flex-wrap: wrap; gap: .4rem .6rem; align-items: center; }
+ul.pend li { display: flex; align-items: center; gap: .4rem; padding: .25rem 0; border-bottom: 1px solid var(--line); }
+ul.pend li label.check { flex: 1 1 auto; margin: 0; }
+ul.pend li input[type=number] { width: 5.5rem; flex: 0 0 auto; }
+h3.pend-h { margin: .8rem 0 .2rem; }

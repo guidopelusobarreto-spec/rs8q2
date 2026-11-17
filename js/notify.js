@@ -57,6 +57,14 @@ export async function checkDue(model, store, now = new Date()) {
       keys.add(key); n++;
     }
   }
+  // Avisos de ciclo (último día, vuelta tras el descanso): una vez al día a partir de las 9:00. Texto genérico en la pantalla de bloqueo.
+  if (now.getHours() >= 9) for (const p of profiles) for (const al of await model.alerts(p.id)) {
+    if (al.kind !== 'ciclo' || !al.short) continue;
+    const key = `ciclo|${p.id}|${t}|${al.text}`;
+    if (keys.has(key)) continue;
+    await reg.showNotification(al.short, { body: `${p.name}. Ábrelo en la app (Progreso → Avisos).`, tag: key, data: { url: './#/avisos' } });
+    keys.add(key); n++;
+  }
   await store.put('settings', { id: 'notified', keys: [...keys].slice(-500) });
   return n;
 }

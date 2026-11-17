@@ -183,8 +183,9 @@ export function missingDoses(plan, admins, until) {
   const out = [], seenWeeks = new Set();
   const mine = admins.filter((a) => belongsTo(a, plan) && (DONE.has(a.status) || a.status === 'omitido'));
   const end = planEnd(plan), last = end && end < until ? end : until;
+  const from = plan.trackFrom && plan.trackFrom > plan.start ? plan.trackFrom : plan.start; // no reclama lo anterior a «contar desde»
   const at = (sc, i = 0) => sc.times[i] || MOMENTS[sc.moments[i] || sc.moments[0]]?.at || '09:00';
-  for (let d = plan.start; d && d <= last; d = addDays(d, 1)) {
+  for (let d = from; d && d <= last; d = addDays(d, 1)) {
     const ph = activePhase(plan, d);
     if (!ph) continue;
     const sc = scheduleFor(plan, ph), amount = ph.amountMax == null ? ph.amount : null;
@@ -222,6 +223,7 @@ export function substanceWeek(plan, date) {
   const ph = plan.phases || [];
   const first = ph.length ? Math.min(...ph.map((f) => f.fromWeek)) : 1;
   const last = ph.length && ph.every((f) => f.toWeek != null) ? Math.max(...ph.map((f) => f.toWeek)) : totalWeeks(plan);
-  return { week, sub: week - first + 1, total: last != null ? last - first + 1 : null, offset: first > 1, before: week < first, after: last != null && week > last };
+  return { week, sub: week - first + 1, total: last != null ? last - first + 1 : null, offset: first > 1, before: week < first, after: last != null && week > last,
+    day: activeDay(plan, date) - (first - 1) * 7 + 1 };
 }
-export const substanceWeekText = (sw) => (!sw ? '' : `Semana ${sw.sub}${sw.total ? ` de ${sw.total}` : ''}${sw.offset ? ` · semana ${sw.week} del protocolo` : ''}`);
+export const substanceWeekText = (sw) => (!sw ? '' : `Semana ${sw.sub}${sw.total ? ` de ${sw.total}` : ''} · día ${sw.day}${sw.offset ? ` · semana ${sw.week} del protocolo` : ''}`);

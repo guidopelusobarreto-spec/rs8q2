@@ -1,6 +1,6 @@
 // Calendario, ciclos, postciclo, recordatorios, peso, hábitos, informes, incidencias y ajustes.
 import { esc, $, $$, opt, field, inp, toast, dialog, fmtDate, fmtNum, readForm, showErr, download, lineChart } from './ui.js';
-import { parseImportText, importPlans, parsePhaseLine, phaseText, PLAN_MODES, PCT_STATUS, PCT_UNDEFINED, REVIEW_DAYS, ADMIN_STATUS, FEEL, activeDay, dateOfActiveDay, planEnd, planBaseEnd, pausesOf, hasOpenPause, runSiblings, addDays, diffDays, todayISO, weightChange, toISODate } from './model.js';
+import { parseImportText, importPlans, parsePhaseLine, phaseText, PLAN_MODES, PCT_STATUS, PCT_UNDEFINED, REVIEW_DAYS, ADMIN_STATUS, FEEL, restWindow, restText, activeDay, dateOfActiveDay, planEnd, planBaseEnd, pausesOf, hasOpenPause, runSiblings, addDays, diffDays, todayISO, weightChange, toISODate } from './model.js';
 import { pauseText, pauseDialog, resumeDialog, removePauseDialog, editPauseDialog } from './pausas.js';
 import { notesList, noteDialog, feelTable, adjustDialog, startDialog, backfillDialog, guideContext, guideHTML, switchDialog } from './ajustes.js';
 import { COLLECTIONS } from './store.js';
@@ -10,10 +10,11 @@ import { setPin, checkPin, askPermission, notifySupported, remindersToICS, check
 import { confirmCompat } from './views3.js';
 import { scheduleFor, scheduleText, adherence, KINDS, DAY_NAMES, MOMENTS, substanceWeek, substanceWeekText } from './schedule.js';
 import { saveUI, refreshProfiles, ctx as appCtx, installApp, appInstalledHere, updateLockBtn } from './app.js';
+import { hoy } from './hoy.js';
 
 const DOW = ['L', 'M', 'X', 'J', 'V', 'S', 'D'];
 const DOW_FULL = [['1', 'Lun'], ['2', 'Mar'], ['3', 'Mié'], ['4', 'Jue'], ['5', 'Vie'], ['6', 'Sáb'], ['0', 'Dom']];
-const TYPES = { prevista: 'Toma prevista', sinregistro: 'Prevista sin registro', registro: 'Registro', recordatorio: 'Recordatorio', ciclo: 'Ciclo', descanso: 'Descanso', revision: 'Revisión', pct: 'Postciclo', peso: 'Pesaje', evento: 'Cita/evento', incidencia: 'Incidencia', sintoma: 'Síntoma' };
+const TYPES = { prevista: 'Toma prevista', sinregistro: 'Prevista sin registro', registro: 'Registro', anulado: 'Registro anulado', recordatorio: 'Recordatorio', ciclo: 'Ciclo', descanso: 'Descanso', revision: 'Revisión', pct: 'Postciclo', peso: 'Pesaje', evento: 'Cita/evento', incidencia: 'Incidencia', sintoma: 'Síntoma' };
 const dowMon = (s) => (new Date(s + 'T12:00:00').getDay() + 6) % 7;
 
 // ── Calendario ──
@@ -39,12 +40,17 @@ export async function calendario(view, r, ctx) {
         ${+x.slice(8)}<div class="dots">${[...new Set(byDay(x).map((i) => i.type))].map((ty) => `<span class="dot t-${ty}" title="${TYPES[ty]}"></span>`).join('')}</div></div>`).join('')}</div>`;
   } else if (v === 'semana') {
     body = Array.from({ length: 7 }, (_, i) => addDays(from, i)).map((x) => `<h3>${new Date(x + 'T12:00:00').toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'short' })}</h3>${list(byDay(x))}`).join('');
-  } else body = list(byDay(d));
+  } else body = '<div id="dayAg"></div><h3 class="grp">Otros del día</h3><div id="dayOther"></div>'; // el día: tus tomas con botones, como en Hoy
   view.innerHTML = `<h1>Calendario</h1>
     <div class="row noprint">${['mes', 'semana', 'dia'].map((x) => `<a class="btn slim ${v === x ? '' : 'sec'}" href="#/calendario?v=${x}&d=${d}">${{ mes: 'Mes', semana: 'Semana', dia: 'Día' }[x]}</a>`).join('')}
       <button id="ev" class="ghost slim">＋ Cita</button></div>
     <div class="card" style="margin-top:.8rem"><div class="calnav"><a class="btn sec slim" href="#/calendario?v=${v}&d=${prev}" aria-label="Anterior">‹</a><strong>${esc(title)}</strong><a class="btn sec slim" href="#/calendario?v=${v}&d=${next}" aria-label="Siguiente">›</a></div>
       <details class="small" style="margin:.4rem 0"><summary>Leyenda</summary><div class="legend">${Object.entries(TYPES).map(([k, l]) => `<span><span class="dot t-${k}"></span> ${l}</span>`).join('')}</div></details>${body}</div>`;
+  if (v === 'dia') {
+    await hoy($('#dayAg'), { query: { d, embed: '1' } }, ctx);
+    const shown = new Set($$('#dayAg [data-undo]').map((b) => b.dataset.undo));
+    $('#dayOther').innerHTML = list(byDay(d).filter((i) => !['prevista', 'sinregistro'].includes(i.type) && !(i.type === 'registro' && shown.has(i.ref))));
+  }
   $$('[data-day]').forEach((el) => { const go = () => (location.hash = `#/calendario?v=dia&d=${el.dataset.day}`); el.addEventListener('click', go); el.addEventListener('keydown', (e) => e.key === 'Enter' && go()); });
   $('#ev').addEventListener('click', async () => {
     const ok = await dialog(`<form><h2>Cita o evento personal</h2>${field('Título', inp('title', '', 'required'), true)}
@@ -71,14 +77,19 @@ const planForm = (products, p = {}) => `
     <p class="small muted">Una fase por línea: <code>semanas 1-4 | cantidad | unidad | frecuencia | nota</code>. Rango: <code>2-2.5</code>; hasta el final: <code>semanas 9-fin</code>. Ejemplo de formato: <code>semanas 1-4 | 1 | tableta | diaria | indicación de mi médico</code>. La frecuencia se lee para la pantalla Hoy; si se entiende mal, corrígela en el plan.</p>
     <textarea name="phasesText" rows="4">${esc((p.phases || []).map((f) => `semanas ${f.fromWeek}-${f.toWeek ?? 'fin'} | ${f.amount ?? ''}${f.amountMax != null ? '-' + f.amountMax : ''} | ${f.unit} | ${f.frequency} | ${f.note}`).join('\n'))}</textarea></fieldset>
   ${field('Pauta anotada (texto libre)', `<textarea name="scheduleNote">${esc(p.scheduleNote || '')}</textarea>`)}
-  ${field('Revisión periódica cada (días; seguimiento continuo)', inp('reviewEveryDays', p.reviewEveryDays ?? '', 'type="number" min="1"'))}
+  <fieldset><legend>Descanso después del ciclo</legend><div class="grid">${field('Descanso', inp('restN', p.rest?.n ?? '', 'type="number" min="1" step="1"'))}
+    ${field('Unidad', `<select name="restUnit">${[['semanas', 'semanas'], ['dias', 'días'], ['meses', 'meses']].map(([k, l]) => opt(k, l, p.rest?.unit || 'semanas')).join('')}</select>`)}</div>
+    <label class="check"><input type="checkbox" name="repeat" ${p.repeat ? 'checked' : ''}>Repetir el ciclo después del descanso (empieza solo)</label>
+    <p class="small muted">Al terminar el ciclo, la app cuenta el descanso y avisa el día antes de volver. Vacío = sin descanso.</p></fieldset>
+  ${field('Revisión periódica cada (días)', inp('reviewEveryDays', p.reviewEveryDays ?? '', 'type="number" min="1"'))}
   <div class="grid">${field('Fuente de la información', inp('source', p.source || ''))}${field('Introducido por', inp('enteredBy', p.enteredBy || ''))}</div>
   <fieldset><legend>Alertas</legend>${[['d7', '7 días antes'], ['d2', '2 días antes'], ['d0', 'El día final'], ['overdue', 'Tras vencer'], ['afterEnd', 'Registro posterior al final']].map(([k, l]) => `<label class="check"><input type="checkbox" name="al_${k}" ${p.alerts?.[k] === false ? '' : 'checked'}>${l}</label>`).join('')}</fieldset>
   ${field('Observaciones', `<textarea name="notes">${esc(p.notes || '')}</textarea>`)}`;
 export function parsePhaseText(t) {
   return (t || '').split('\n').map((l) => l.trim()).filter(Boolean).map((l) => parsePhaseLine(l));
 }
-const planData = (d) => { d.phases = parsePhaseText(d.phasesText); delete d.phasesText; const alerts = {}; for (const k of ['d7', 'd2', 'd0', 'overdue', 'afterEnd']) { alerts[k] = !!d['al_' + k]; delete d['al_' + k]; } return { ...d, alerts }; };
+const planData = (d) => { d.phases = parsePhaseText(d.phasesText); delete d.phasesText;
+  d.rest = Number(d.restN) > 0 ? { n: Number(d.restN), unit: d.restUnit || 'semanas' } : null; d.repeat = !!d.repeat && !!d.rest; delete d.restN; delete d.restUnit; const alerts = {}; for (const k of ['d7', 'd2', 'd0', 'overdue', 'afterEnd']) { alerts[k] = !!d['al_' + k]; delete d['al_' + k]; } return { ...d, alerts }; };
 
 export async function planes(view, r, ctx) {
   const m = ctx.model;
@@ -132,6 +143,8 @@ export async function planDetalle(view, r, ctx) {
         if (sw?.before) return `Empieza en la semana ${sw.week - sw.sub + 1} del protocolo (ahora: semana ${sw.week})`;
         if ((end && t > end) || sw?.after) return 'Terminado';
         return `<strong>${esc(substanceWeekText(sw))}</strong>${pz ? ' · en pausa' : ''}`; })()}</dd>
+      ${p.cycleNo > 1 ? `<dt>Ciclo</dt><dd>${p.cycleNo}</dd>` : ''}
+      <dt>Descanso después</dt><dd>${p.rest ? `${esc(restText(p.rest))}${(() => { const rw = restWindow(p, t); return rw ? ` (del ${fmtDate(rw.from)} al ${fmtDate(rw.to)})` : ''; })()} · ${p.repeat ? 'el ciclo se repite solo' : 'no se repite'}` : '—'}</dd>
       <dt>Inicio</dt><dd>${fmtDate(p.start)}</dd><dt>Fin</dt><dd>${end ? fmtDate(end) + (p.end ? '' : ' (calculado por duración)') : 'Sin fecha final registrada'}${shift ? `<br><span class="small">Incluye ${shift} ${shift === 1 ? 'día' : 'días'} de pausa (sin pausas: ${fmtDate(base)})${hasOpenPause(p) ? '. Provisional: supone que reanudas mañana' : ''}.</span>` : ''}</dd>
       <dt>Cantidad del plan</dt><dd>${p.plannedAmount != null ? `${fmtNum(p.plannedAmount, 4)} ${esc(p.plannedUnit)}` : '—'}</dd><dt>Pauta anotada</dt><dd>${esc(p.scheduleNote || '—')}</dd>
       <dt>Fases del protocolo</dt><dd>${p.phases?.length ? p.phases.map((f) => esc(phaseText(f))).join('<br>') : '—'}</dd>
