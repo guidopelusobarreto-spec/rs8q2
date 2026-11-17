@@ -119,3 +119,19 @@ test('biblioteca nueva: detecta y actualiza el plan en curso conservando tomas e
   assert.equal((await m.store.get('administrations', admin.id)).planId, p.id);
   assert.equal((await m.libraryChanges()).length, 0);
 });
+
+test('avisos para el calendario del móvil: tomas interdiarias a las 21:30 y avisos del ciclo', async () => {
+  const { calendarEvents } = await import('../js/ajustes.js');
+  const { eventsToICS } = await import('../js/notify.js');
+  const p = { id: 'k', name: 'Kiss', productId: 'kiss10', start: '2026-11-12', duration: 6, durationUnit: 'semanas', rest: { n: 4, unit: 'semanas' }, phases: [ph(1, 6, 150, '1 vez cada 2 días (interdiario), a las 21:30 (SC)')] };
+  const ev = calendarEvents([p], () => 'Kisspeptin-10', '2026-11-17');
+  const doses = ev.filter((e) => !e.uid.includes('ciclo'));
+  assert.equal(doses.length, 18, '18/11 → 22/12, un día sí y uno no');
+  assert.equal(doses[0].start.getHours() + ':' + doses[0].start.getMinutes(), '21:30');
+  assert.equal(doses[0].title, 'Kisspeptin-10 · 150 u');
+  assert.deepEqual(ev.filter((e) => e.uid.includes('ciclo')).map((e) => e.uid.slice(-10)), ['2026-12-22', '2026-12-23', '2027-01-20']);
+  const ics = eventsToICS(ev);
+  assert.equal((ics.match(/BEGIN:VEVENT/g) || []).length, 21);
+  assert.match(ics, /TRIGGER:-PT0M/);
+  assert.equal(calendarEvents([{ ...p, closed: true }], () => 'x', '2026-11-17').length, 0);
+});

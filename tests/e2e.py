@@ -499,6 +499,16 @@ with sync_playwright() as p:
         ok('biblioteca: vuelve a la versión actual sin errores', dlg(page).get_attribute('open') is None)
     page.select_option('#profileSel', label='Ana'); page.wait_for_timeout(300)
 
+    # avisos en el calendario del móvil (.ics)
+    go(page, '#/planes'); page.wait_for_timeout(300)
+    page.locator('main li', has_text='Lipólisis (Mujeres) — Creatina').filter(has_not_text='Cerrado').first.locator('a').first.click(); page.wait_for_timeout(500)
+    page.click('#icsBtn'); page.wait_for_timeout(300)
+    ok('calendario del móvil: explica cómo importarlo en Fossify', 'Fossify Calendar' in dlg(page).inner_text() and 'avisos' in dlg(page).inner_text())
+    with page.expect_download() as dl_info:
+        dlg(page).locator('button:has-text("Descargar")').click()
+    ics = open(dl_info.value.path(), encoding='utf-8').read()
+    ok(f'calendario del móvil: archivo .ics con avisos ({ics.count("BEGIN:VEVENT")})', ics.startswith('BEGIN:VCALENDAR') and ics.count('BEGIN:VEVENT') >= 1 and 'BEGIN:VALARM' in ics)
+
     # importador de texto
     go(page, '#/planes'); page.wait_for_timeout(200); page.click('#imp')
     page.fill('#impTxt', 'PLAN: Malo\nPERSONA: Nadie\nSUSTANCIA: reta15\nCOSA RARA')

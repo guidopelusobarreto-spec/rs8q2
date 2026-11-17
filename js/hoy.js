@@ -2,7 +2,7 @@
 import { esc, $, $$, toast, dialog, fmtDate, field, inp } from './ui.js';
 import { todayISO, planEnd, planBaseEnd, diffDays, addDays, planWeek, pausedOn, pausesOf, notesFor, restWindow, restText } from './model.js';
 import { pauseText, pauseDialog, resumeDialog } from './pausas.js';
-import { feelChip, feelDialog, guideBox, startDialog, guideContext, guideHTML, switchDialog, pendingDoses, reviewDialog, quickDialog } from './ajustes.js';
+import { feelChip, feelDialog, guideBox, startDialog, guideContext, guideHTML, switchDialog, pendingDoses, reviewDialog, quickDialog, calendarDialog } from './ajustes.js';
 import { MOMENTS, scheduleText, amountText, adherence, totalWeeks, substanceWeek, substanceWeekText } from './schedule.js';
 import { fmtDoc, fichaHTML, splitFichas, cleanInline } from './text.js';
 import { productOptions, exceedFlow } from './views1.js';
@@ -249,12 +249,13 @@ export async function protocolos(view, r, ctx) {
       <div class="table-wrap"><table class="crono"><thead><tr><th class="sub">Semana</th>${Array.from({ length: weeks }, (_, i) => `<th class="${i + 1 === now ? 'now' : ''}">${i + 1}</th>`).join('')}<th title="Tomas hechas frente a previstas hasta hoy">Cumpl.</th></tr></thead><tbody>${rows}</tbody></table></div>
       <p class="small muted">Cumplimiento: tomas registradas como hechas frente a las previstas por tus fases hasta hoy.${pz.length ? ' Las semanas cuentan solo días activos.' : ''}</p>
       ${pz.length ? `<p class="small"><strong>Pausas:</strong> ${pz.map((z) => esc(pauseText(z))).join(' · ')}</p>` : ''}
-      ${finished ? '' : `<div class="row noprint">${open ? `<button class="ok slim" data-resume-run="${i}">Reanudar</button>` : `<button class="sec slim" data-pause-run="${i}">${x.plans.length > 1 ? 'Pausar el protocolo' : 'Pausar'}</button>`}<button class="sec slim" data-start-run="${i}">Fecha de inicio</button><button class="sec slim" data-switch-run="${i}">Cambiar de protocolo</button></div>`}</div>`;
+      ${finished ? '' : `<div class="row noprint">${open ? `<button class="ok slim" data-resume-run="${i}">Reanudar</button>` : `<button class="sec slim" data-pause-run="${i}">${x.plans.length > 1 ? 'Pausar el protocolo' : 'Pausar'}</button>`}<button class="sec slim" data-start-run="${i}">Fecha de inicio</button><button class="sec slim" data-switch-run="${i}">Cambiar de protocolo</button><button class="sec slim" data-ics-run="${i}">Avisos en el móvil</button></div>`}</div>`;
   };
   view.innerHTML = `<h1>Cronograma</h1>${cur.length ? cur.map(table).join('') : `<div class="card empty"><p>No hay protocolos en curso para esta persona.</p><p><a class="btn" href="#/biblioteca">Aplicar uno desde la Biblioteca</a></p></div>`}
     ${old.length ? `<details class="card"><summary>Terminados (${old.length})</summary>${old.map(table).join('')}</details>` : ''}`;
   const lab = (p) => labels.get(p.id) || p.name || 'plan', again = () => protocolos(view, r, ctx);
   $$('[data-pause-run]', view).forEach((b) => b.addEventListener('click', async () => { if (await pauseDialog(ctx, all[b.dataset.pauseRun].plans, lab)) again(); }));
+  $$('[data-ics-run]', view).forEach((b) => b.addEventListener('click', () => calendarDialog(ctx, all[b.dataset.icsRun].plans, lab)));
   $$('[data-switch-run]', view).forEach((b) => b.addEventListener('click', async () => { if (await switchDialog(ctx, all[b.dataset.switchRun].plans, lab)) again(); }));
   $$('[data-start-run]', view).forEach((b) => b.addEventListener('click', async () => { if (await startDialog(ctx, all[b.dataset.startRun].plans, lab)) again(); }));
   $$('[data-resume-run]', view).forEach((b) => b.addEventListener('click', async () => {

@@ -1,8 +1,9 @@
 // Ajustes personales del ciclo: cómo sienta cada toma, notas-guía del usuario, cambio de cantidad desde una semana,
 // fecha de inicio de un protocolo y días anteriores al alta. La app registra y muestra; no propone cantidades.
-import { esc, toast, dialog, fmtDate, field, inp, opt } from './ui.js';
-import { FEEL, todayISO, addDays, planWeek, planEnd, phaseFor } from './model.js';
-import { missingDoses } from './schedule.js';
+import { esc, toast, dialog, fmtDate, field, inp, opt, download } from './ui.js';
+import { FEEL, todayISO, addDays, planWeek, planEnd, phaseFor, restWindow } from './model.js';
+import { missingDoses, slotsOn, MOMENTS, amountText } from './schedule.js';
+import { eventsToICS } from './notify.js';
 import { parseFicha, splitFichas, cleanInline } from './text.js';
 
 // ── Cómo sienta ──
@@ -279,3 +280,42 @@ export async function quickDialog(ctx, date, plans, labelOf = (p) => p.name || '
   return true;
 }
 const longDay = (d) => new Date(d + 'T12:00:00').toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
+
+// ── Avisos en el calendario del móvil: un evento por toma prevista (con su hora) y los avisos del ciclo ──
+// Desde hoy hasta el fin del plan (máximo 12 semanas; 4 si el plan no tiene fin). Las tomas «a demanda», por cupo semanal o «cada N a M días» no tienen día fijo: no se incluyen.
+export function calendarEvents(plans, labelOf = (p) => p.name || 'plan', today = todayISO()) {
+  const ev = [];
+  const at = (d, hhmm) => new Date(`${d}T${hhmm}:00`);
+  for (const p of plans) {
+    if (p.closed || !p.start) continue;
+    const end = planEnd(p), from = p.start > today ? p.start : today, to = end && end < addDays(from, 83) ? end : addDays(from, end ? 83 : 27); // sin fin: 4 semanas
+    for (let d = from; d <= to; d = addDays(d, 1)) {
+      for (const s of slotsOn(p, d)) {
+        const hhmm = s.time || MOMENTS[s.moment]?.at || '09:00';
+        ev.push({ uid: `${p.id}-${d}-${s.index}`, start: at(d, hhmm), minutes: 15, title: `${labelOf(p)} · ${amountText(s.phase) || 'toma'}`, desc: 'Toma prevista por tu plan. Regístrala en la app Registro de sustancias.' });
+      }
+    }
+    const rw = restWindow(p, today);
+    if (rw && end) {
+      const add = (d, title) => { if (d >= today) ev.push({ uid: `${p.id}-ciclo-${d}`, start: at(d, '10:00'), minutes: 15, title, desc: 'Aviso de tu ciclo (app Registro de sustancias).' }); };
+      add(addDays(end, -1), `Mañana termina el ciclo: ${labelOf(p)}`);
+      add(end, `Hoy termina el ciclo: ${labelOf(p)}. Descanso hasta el ${fmtDate(rw.to)}`);
+      add(rw.to, `Mañana termina el descanso: ${labelOf(p)}. Decide si empiezas otro ciclo el ${fmtDate(rw.restart)}`);
+    }
+  }
+  return ev.sort((a, b) => a.start - b.start);
+}
+export async function calendarDialog(ctx, plans, labelOf = (p) => p.name || 'plan') {
+  const ev = calendarEvents(plans, labelOf);
+  if (!ev.length) { toast('No hay tomas con día fijo a partir de hoy'); return false; }
+  const last = ev[ev.length - 1].start.toISOString().slice(0, 10);
+  const ok = await dialog(`<form><h2>Avisos en el calendario del móvil</h2>
+    <p>Se crea un archivo con <strong>${ev.length} avisos</strong> (cada toma a su hora y los avisos de fin de ciclo y de descanso) desde hoy hasta el ${esc(fmtDate(last))}.</p>
+    <ol class="small"><li>Pulsa <strong>Descargar</strong>.</li><li>Abre el archivo descargado y elige <strong>Fossify Calendar</strong>. Si no aparece: en Fossify, menú ⋮ → <strong>Importar eventos desde un archivo .ics</strong>.</li>
+    <li>Al importar, elige o crea un tipo de evento propio (por ejemplo, «Tomas») para poder ocultarlo cuando quieras.</li></ol>
+    <p class="small muted">El calendario avisa aunque la app esté cerrada. Registrar la toma se sigue haciendo en la app. Si cambias el plan, vuelve a descargar el archivo.</p>
+    <div class="row"><button class="ok">Descargar</button><button type="button" class="ghost" data-close>Cancelar</button></div></form>`);
+  if (!ok) return false;
+  download(`avisos_tomas_${todayISO()}.ics`, eventsToICS(ev), 'text/calendar');
+  return true;
+}

@@ -82,7 +82,7 @@ export async function tryPeriodicSync() {
 }
 
 // ── .ics: los recordatorios pasan al calendario de Android, que avisa aunque la app esté cerrada ──
-const icsEsc = (s) => String(s).replace(/[\\;,]/g, (c) => '\\' + c).replace(/\n/g, '\\n');
+export const icsEsc = (s) => String(s).replace(/[\\;,]/g, (c) => '\\' + c).replace(/\n/g, '\\n');
 const DAYS = ['SU', 'MO', 'TU', 'WE', 'TH', 'FR', 'SA'];
 export function remindersToICS(items) {
   const stamp = new Date().toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
@@ -100,6 +100,21 @@ export function remindersToICS(items) {
         `SUMMARY:${icsEsc(r.label)}`, `DESCRIPTION:${icsEsc(`Perfil: ${profileName}. Recordatorio sin cantidad: confirma en la app lo que hayas hecho.`)}`,
         'BEGIN:VALARM', 'ACTION:DISPLAY', 'TRIGGER:PT0M', `DESCRIPTION:${icsEsc(r.label)}`, 'END:VALARM', 'END:VEVENT');
     }
+  }
+  lines.push('END:VCALENDAR');
+  return lines.join('\r\n') + '\r\n';
+}
+
+// ── .ics de tus tomas y avisos de ciclo, para importarlos en el calendario del móvil (p. ej. Fossify Calendar) ──
+// events: [{ uid, start: Date, minutes, title, desc }]. Horas en UTC (Z) para que no dependan del huso del calendario.
+const utc = (d) => d.toISOString().replace(/[-:]/g, '').replace(/\.\d+Z$/, 'Z');
+export function eventsToICS(events) {
+  const stamp = utc(new Date());
+  const lines = ['BEGIN:VCALENDAR', 'VERSION:2.0', 'PRODID:-//registro-sustancias//ES', 'CALSCALE:GREGORIAN', 'METHOD:PUBLISH'];
+  for (const e of events) {
+    lines.push('BEGIN:VEVENT', `UID:${e.uid}@registro-sustancias`, `DTSTAMP:${stamp}`, `DTSTART:${utc(e.start)}`, `DURATION:PT${e.minutes || 15}M`,
+      `SUMMARY:${icsEsc(e.title)}`, `DESCRIPTION:${icsEsc(e.desc || '')}`,
+      'BEGIN:VALARM', 'ACTION:DISPLAY', 'TRIGGER:-PT0M', `DESCRIPTION:${icsEsc(e.title)}`, 'END:VALARM', 'END:VEVENT');
   }
   lines.push('END:VCALENDAR');
   return lines.join('\r\n') + '\r\n';
