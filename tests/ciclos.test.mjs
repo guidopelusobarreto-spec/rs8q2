@@ -127,13 +127,16 @@ test('avisos para el calendario del móvil: tomas interdiarias a las 21:30 y avi
   const ev = calendarEvents([p], () => 'Kisspeptin-10', '2026-11-17');
   const doses = ev.filter((e) => !e.uid.includes('ciclo'));
   assert.equal(doses.length, 18, '18/11 → 22/12, un día sí y uno no');
-  assert.equal(doses[0].start.getHours() + ':' + doses[0].start.getMinutes(), '21:30');
-  assert.equal(doses[0].title, '💊 Kisspeptin-10 · 150 u');
+  assert.equal(doses[0].start.toTimeString().slice(0, 5), '21:00', 'bloque de la hora entera: 21:00 a 22:00');
+  assert.equal(doses[0].minutes, 60);
+  assert.equal(doses[0].title, '💊 Kisspeptin-10 150 u · 21:30');
+  assert.deepEqual(doses[0].alarms, [30]);
   assert.deepEqual(ev.filter((e) => e.uid.includes('ciclo')).map((e) => e.uid.slice(-10)), ['2026-12-22', '2026-12-23', '2027-01-20']);
   const ics = eventsToICS(ev);
   assert.equal((ics.match(/BEGIN:VEVENT/g) || []).length, 21);
-  assert.match(ics, /TRIGGER:-P0DT0H0M0S/);
-  assert.match(ics, /DTSTART:20261118T213000\r\n/, 'hora local sin Z, como Guido PRO');
+  assert.match(ics, /DTSTART:20261118T210000\r\nDTEND:20261118T220000\r\n/, 'hora local sin Z, como Guido PRO; de 21 a 22');
+  assert.match(ics, /TRIGGER:P0DT0H30M0S/, 'la alarma suena a las 21:30');
+  assert.match(ics, /TRIGGER:-P0DT0H0M0S/, 'avisos del ciclo a las 10:00 en punto');
   assert.match(ics, /CATEGORIES:TOMAS/);
   assert.equal(calendarEvents([{ ...p, closed: true }], () => 'x', '2026-11-17').length, 0);
 });
@@ -179,7 +182,42 @@ test('biblioteca v6: Minoxidil tópico (2 al día) y Finasterida 1,25 mg (1 al d
   assert.equal(slotsOn(fn, '2027-03-01').length, 1);
   const ev = calendarEvents([mx, fn], (p) => p.substance, '2026-11-17');
   const day = ev.filter((e) => e.uid.includes('2026-11-18'));
-  assert.deepEqual(day.map((e) => e.start.toTimeString().slice(0, 5)).sort(), ['09:00', '09:00', '21:00']);
+  assert.deepEqual(day.map((e) => e.start.toTimeString().slice(0, 5)), ['09:00', '21:00'], 'misma hora, mismo bloque');
+  assert.equal(day[0].title, '💊 Finasterida 1.25 mg · Minoxidil tópico 5 % 1 aplicación · 09:00');
+  assert.ok(day.every((e) => e.minutes === 60 && e.alarms.join() === '0'));
   assert.ok(ev.every((e) => e.start < new Date('2026-12-15T00:00:00')), 'sin fin: 4 semanas');
   assert.equal((await m.alerts(a.id)).filter((x) => /pendiente de confirmar/.test(x.text)).length, 0);
+});
+
+test('Fossify: «1 vez por semana» sin día no genera avisos hasta fijar el día; luego sí, ese día y a esa hora', async () => {
+  const { calendarEvents, phasesWithoutDay } = await import('../js/ajustes.js');
+  const { m, a } = await mk('2026-11-18');
+  const p = await m.addPlan(a.id, { mode: 'duracion', name: 'Reta', start: '2026-10-16', duration: 24, durationUnit: 'semanas', substance: 'Retatrutida',
+    phases: [ph(1, 4, 2, '1 vez por semana (subcutánea)'), ph(5, 12, 4, '1 vez por semana'), ph(13, 24, 6, '1 vez por semana')] });
+  assert.equal(calendarEvents([p], undefined, '2026-11-18').length, 0, 'sin día fijo no hay avisos');
+  const nd = phasesWithoutDay(p, '2026-11-18');
+  assert.deepEqual(nd.weekly, ['1 vez por semana'], 'solo las fases de hoy en adelante');
+  await m.setFrequency(a.id, p.id, '1 vez por semana', { kind: 'days', days: [5], perDay: 1, perWeek: null, times: ['20:00'], moments: [] });
+  const q = (await m.list('plans', a.id))[0];
+  const ev = calendarEvents([q], undefined, '2026-11-18').filter((e) => !e.uid.includes('ciclo'));
+  assert.ok(ev.length >= 12);
+  assert.ok(ev.every((e) => e.start.getDay() === 5 && e.start.toTimeString().startsWith('20:00') && e.title.endsWith('· 20:00')));
+  assert.equal(ev[0].uid.split('-').slice(-4, -1).join('-'), '2026-11-20');
+  assert.deepEqual(phasesWithoutDay(q, '2026-11-18').weekly, ['1 vez por semana'], 'se sigue ofreciendo para poder cambiar el día');
+});
+
+test('Fossify: tres sustancias en la misma hora → un solo bloque de 1 hora con una alarma por hora exacta', async () => {
+  const { calendarEvents } = await import('../js/ajustes.js');
+  const { eventsToICS } = await import('../js/notify.js');
+  const mkp = (id, sub, amt, freq) => ({ id, profileId: 'g', substance: sub, start: '2026-11-12', duration: 6, durationUnit: 'semanas', phases: [{ fromWeek: 1, toWeek: 6, amount: amt, unit: 'mg', frequency: freq }] });
+  const ps = [mkp('k', 'Kiss', 0.15, '1 vez cada 2 días, a las 21:30'), mkp('f', 'Fina', 1.25, '1 vez al día a las 21:30'), mkp('r', 'Reta', 2.5, '1 vez por semana, viernes a las 21:00')];
+  const ev = calendarEvents(ps, (p) => p.substance, '2026-11-18');
+  const fri = ev.filter((e) => e.uid === 'g-2026-11-20-21');
+  assert.equal(fri.length, 1);
+  assert.equal(fri[0].title, '💊 Reta 2.5 mg (21:00) · Fina 1.25 mg (21:30) · Kiss 0.15 mg (21:30)');
+  assert.deepEqual(fri[0].alarms, [0, 30]);
+  const ics = eventsToICS(fri);
+  assert.equal((ics.match(/BEGIN:VALARM/g) || []).length, 2);
+  assert.match(ics, /DTSTART:20261120T210000\r\nDTEND:20261120T220000/);
+  assert.equal(ev.filter((e) => e.uid === 'g-2026-11-19-21')[0].title, '💊 Fina 1.25 mg · 21:30', 'jueves: solo finasterida');
 });

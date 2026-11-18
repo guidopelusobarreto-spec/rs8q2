@@ -2,7 +2,7 @@
 // fecha de inicio de un protocolo y días anteriores al alta. La app registra y muestra; no propone cantidades.
 import { esc, toast, dialog, fmtDate, field, inp, opt, download } from './ui.js';
 import { FEEL, todayISO, toISODate, addDays, planWeek, planEnd, phaseFor, restWindow } from './model.js';
-import { missingDoses, slotsOn, MOMENTS, amountText } from './schedule.js';
+import { missingDoses, slotsOn, MOMENTS, amountText, scheduleFor, parseFrequency, belongsTo, DAY_NAMES } from './schedule.js';
 import { eventsToICS, deliverICS } from './notify.js';
 import { parseFicha, splitFichas, cleanInline } from './text.js';
 
@@ -282,13 +282,15 @@ export async function quickDialog(ctx, date, plans, labelOf = (p) => p.name || '
 const longDay = (d) => new Date(d + 'T12:00:00').toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
 
 // ── Avisos en Fossify Calendar: un evento por toma prevista (con su hora) y los avisos del ciclo ──
-// Desde hoy hasta el fin del plan (máximo 12 semanas; 4 si el plan no tiene fin). Las tomas a demanda, por cupo semanal
+// Desde hoy hasta el fin del plan (máximo 12 semanas; 4 si el plan no tiene fin). La hora de la toma va en el título. Las tomas a demanda, por cupo semanal
 // o «cada N a M días» no tienen día fijo: no se incluyen. Sin hora en tu texto: 1 toma → 09:00; 2 → 09:00 y 21:00; 3 → 09:00, 15:00 y 21:00.
 const DEFAULT_AT = { 1: ['09:00'], 2: ['09:00', '21:00'], 3: ['09:00', '15:00', '21:00'] };
+// En Fossify cada aviso ocupa la hora entera (21:30 → bloque de 21:00 a 22:00) para que se lea el texto; la alarma suena a la hora exacta.
+const hourBlock = (d, hhmm) => ({ start: new Date(`${d}T${hhmm.slice(0, 2)}:00:00`), minutes: 60, alarms: [Number(hhmm.slice(3, 5)) || 0] });
 export const icsKey = (p) => p.substance || p.productId || p.id;
+// Las tomas del mismo día y la misma hora van juntas en un solo bloque (ancho completo en Fossify), con una alarma por cada hora exacta (máx. 3).
 export function calendarEvents(plans, labelOf = (p) => p.name || 'plan', today = todayISO(), off = []) {
-  const ev = [];
-  const at = (d, hhmm) => new Date(`${d}T${hhmm}:00`);
+  const ev = [], blocks = new Map();
   for (const p of plans) {
     if (p.closed || !p.start || off.includes(icsKey(p))) continue;
     const end = planEnd(p), from = p.start > today ? p.start : today, to = end && end < addDays(from, 83) ? end : addDays(from, end ? 83 : 27);
@@ -296,18 +298,27 @@ export function calendarEvents(plans, labelOf = (p) => p.name || 'plan', today =
       const sl = slotsOn(p, d);
       for (const s of sl) {
         const hhmm = s.time || MOMENTS[s.moment]?.at || (DEFAULT_AT[sl.length] || DEFAULT_AT[1])[s.index] || '09:00';
-        ev.push({ uid: `${p.id}-${d}-${s.index}`, start: at(d, hhmm), minutes: 15, title: `💊 ${labelOf(p)} · ${amountText(s.phase) || 'toma'}`, desc: 'Toma prevista por tu plan. Regístrala en la app Registro de sustancias.' });
+        const key = `${p.profileId || 'p'}-${d}-${hhmm.slice(0, 2)}`;
+        if (!blocks.has(key)) blocks.set(key, { d, items: [] });
+        blocks.get(key).items.push({ hhmm, text: `${labelOf(p)} ${amountText(s.phase) || ''}`.trim() });
       }
     }
     const rw = restWindow(p, today);
     if (rw && end) {
-      const add = (d, title) => { if (d >= today) ev.push({ uid: `${p.id}-ciclo-${d}`, start: at(d, '10:00'), minutes: 15, title, desc: 'Aviso de tu ciclo (app Registro de sustancias).' }); };
+      const add = (d, title) => { if (d >= today) ev.push({ uid: `${p.id}-ciclo-${d}`, ...hourBlock(d, '10:00'), title, desc: 'Aviso de tu ciclo (app Registro de sustancias).' }); };
       add(addDays(end, -1), `⏳ Mañana termina el ciclo: ${labelOf(p)}`);
       add(end, `🏁 Hoy termina el ciclo: ${labelOf(p)}. Descanso hasta el ${fmtDate(rw.to)}`);
       add(rw.to, `🔁 Mañana termina el descanso: ${labelOf(p)}. Decide si empiezas otro ciclo el ${fmtDate(rw.restart)}`);
     }
   }
-  return ev.sort((a, b) => a.start - b.start);
+  for (const [uid, { d, items }] of blocks) {
+    items.sort((x, y) => x.hhmm.localeCompare(y.hhmm) || x.text.localeCompare(y.text));
+    const times = [...new Set(items.map((x) => x.hhmm))];
+    const title = '💊 ' + (times.length === 1 ? `${items.map((x) => x.text).join(' · ')} · ${times[0]}` : items.map((x) => `${x.text} (${x.hhmm})`).join(' · '));
+    ev.push({ uid, ...hourBlock(d, times[0]), alarms: times.slice(0, 3).map((h) => Number(h.slice(3, 5)) || 0), title,
+      desc: `Tomas previstas por tu plan: ${items.map((x) => `${x.text} a las ${x.hhmm}`).join('; ')}. Regístralas en la app Registro de sustancias.` });
+  }
+  return ev.sort((a, b) => a.start - b.start || a.uid.localeCompare(b.uid));
 }
 const icsCfg = async (ctx) => (await ctx.store.get('settings', 'icsCfg')) || { id: 'icsCfg', auto: false, off: [], saved: false };
 // Exporta a Fossify los avisos de la persona activa. Solo si algo cambió (o force). Lo que ya no toca se manda como «🗑 BORRAR» sin alarma.
@@ -344,14 +355,41 @@ export async function calendarUntil(ctx) {
   return calendarEvents(plans, undefined, m.today(), cfg.off || []).some((e) => toISODate(e.start) > until) ? until : '';
 }
 export async function calendarAuto(ctx) { return !!(await icsCfg(ctx)).auto; }
+// Fases de hoy en adelante sin día fijo en tu texto. «1 vez por semana» se puede fijar a un día (aunque ya se haya fijado: así se puede cambiar);
+// el resto (cada N a M días, a demanda…) no se avisa.
+const fromWeek = (p, today) => (p.start > today ? 1 : planWeek(p, today) || 1);
+export function phasesWithoutDay(p, today = todayISO()) {
+  const w = fromWeek(p, today), weekly = new Set(), other = new Set();
+  for (const f of p.phases || []) {
+    if ((f.toWeek ?? Infinity) < w) continue;
+    const base = parseFrequency(f.frequency || ''), sc = scheduleFor(p, f);
+    if (base.kind === 'weekly' && (base.perWeek || 1) === 1) weekly.add(f.frequency || '');
+    else if (!['daily', 'days', 'everyN'].includes(sc.kind)) other.add(f.frequency || '');
+  }
+  return { weekly: [...weekly], other: [...other] };
+}
+const DOW = (d) => new Date(d + 'T12:00:00Z').getUTCDay();
 export async function calendarDialog(ctx) {
   const m = ctx.model, plans = (await m.list('plans', ctx.profileId)).filter((p) => !p.closed), labels = await m.planLabels(plans), cfg = await icsCfg(ctx);
   const keys = [...new Map(plans.map((p) => [icsKey(p), labels.get(p.id) || p.name || 'plan'])).entries()];
   if (!keys.length) { toast('No tienes planes activos'); return false; }
+  // Sustancias «1 vez por semana» sin día: se propone el día de la semana de tu última toma registrada (o el del inicio).
+  const t = m.today(), admins = await m.list('administrations', ctx.profileId);
+  const free = keys.map(([k, l], i) => {
+    const ps = plans.filter((p) => icsKey(p) === k), nd = ps.map((p) => ({ p, ...phasesWithoutDay(p, t) }));
+    const last = admins.filter((a) => ['realizado', 'retrasado'].includes(a.status) && ps.some((p) => belongsTo(a, p))).map((a) => a.date).sort().pop();
+    const set = nd.flatMap((x) => x.weekly.map((w) => x.p.freqOverrides?.[w])).find((o) => o?.kind === 'days' && o.days?.length);
+    return { k, l, i, nd, day: set ? set.days[0] : last ? DOW(last) : DOW(ps[0].start || t), time: set?.times?.[0] || '09:00', fromLast: !set && !!last, set: !!set };
+  });
+  const dayBox = (f) => !f.nd.some((x) => x.weekly.length) ? '' : `<div class="card" data-wk="${esc(f.k)}"><p class="small"><strong>${esc(f.l)}</strong>: tu protocolo dice «${esc(f.nd.find((x) => x.weekly.length).weekly[0])}», sin día. ${f.set ? 'Día fijado para los avisos:' : `Para avisarte hace falta un día fijo${f.fromLast ? ' (propuesto: el de tu última toma registrada)' : ''}.`} Ese día también se verá en Hoy y en el calendario de la app.</p>
+      <div class="row">${field('Día', `<select name="wd${f.i}">${DAY_NAMES.map((n, d) => opt(String(d), n, String(f.day))).join('')}</select>`)}${field('Hora', inp('wt' + f.i, f.time, 'type="time"'))}</div></div>`;
+  const otherTxt = free.flatMap((f) => [...new Set(f.nd.flatMap((x) => x.other))].map((o) => `${f.l}: «${o}»`));
   let out = null;
   const ok = await dialog(`<form><h2>Avisos en Fossify Calendar</h2>
-    <p class="small">Cada toma con día fijo, a su hora, y los avisos de fin de ciclo y de descanso. Fossify los guarda en su propio tipo de evento, «TOMAS», que puedes ocultar.</p>
+    <p class="small">Cada toma con día fijo y los avisos de fin de ciclo y de descanso. Cada aviso ocupa la hora entera (por ejemplo, de 21:00 a 22:00) y las tomas de la misma hora van juntas en un solo bloque; la alarma suena a la hora exacta de cada toma. Fossify los guarda en su propio tipo de evento, «TOMAS», que puedes ocultar.</p>
     <fieldset><legend>¿De qué quieres aviso?</legend>${keys.map(([k, l]) => `<label class="check"><input type="checkbox" name="on" value="${esc(k)}" data-multi ${(cfg.off || []).includes(k) ? '' : 'checked'}>${esc(l)}</label>`).join('')}</fieldset>
+    ${free.map(dayBox).join('')}
+    ${otherTxt.length ? `<p class="small muted">Sin día fijo, no se avisan: ${otherTxt.map(esc).join(' · ')}.</p>` : ''}
     <label class="check"><input type="checkbox" name="auto" ${cfg.auto || !cfg.saved ? 'checked' : ''}>Actualizar Fossify automáticamente cuando cambie un plan</label>
     <ol class="small"><li>Pulsa <strong>Enviar a Fossify</strong>.</li><li>Elige <strong>Fossify Calendar</strong> (o abre la descarga: «Descarga completada · Abrir») e importa.</li></ol>
     <p class="small muted">Si cambias un plan, se actualizan los mismos eventos (no se duplican). Los que ya no tocan se vacían y pasan a la categoría PAPELERA (01/01/2000), sin alarma; si quieres borrarlos del todo, hazlo desde los ajustes de Fossify donde se gestionan los tipos de evento.</p>
@@ -359,6 +397,11 @@ export async function calendarDialog(ctx) {
     onSubmit: async (d) => {
       const on = d.on || [];
       await ctx.store.put('settings', { id: 'icsCfg', auto: !!d.auto, saved: true, off: keys.map(([k]) => k).filter((k) => !on.includes(k)) });
+      for (const f of free) {
+        if (!on.includes(f.k) || d['wd' + f.i] == null) continue;
+        const sched = { kind: 'days', days: [Number(d['wd' + f.i])], perDay: 1, perWeek: null, times: [d['wt' + f.i] || '09:00'], moments: [] };
+        for (const x of f.nd) for (const text of x.weekly) await m.setFrequency(ctx.profileId, x.p.id, text, sched);
+      }
       out = await syncCalendar(ctx, { force: true });
       return true;
     },

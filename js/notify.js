@@ -128,7 +128,9 @@ export function eventsToICS(events, lastModified = new Date()) {
     const end = new Date(e.start.getTime() + (e.minutes || 15) * 60000);
     lines.push(`DTSTART:${local(e.start)}`, `DTEND:${local(end)}`, `SUMMARY:${icsEsc(e.title)}`, `DESCRIPTION:${icsEsc(e.desc || '')}`,
       'CATEGORIES:TOMAS', 'X-FOSSIFY-CATEGORY-COLOR:-14575885', 'STATUS:CONFIRMED',
-      'BEGIN:VALARM', 'ACTION:DISPLAY', 'TRIGGER:-P0DT0H0M0S', `DESCRIPTION:${icsEsc(e.title)}`, 'END:VALARM', 'END:VEVENT');
+      // alarms: minutos después del inicio del bloque (alarma positiva, como los avisos de Guido PRO). Fossify guarda como mucho 3.
+      ...(e.alarms || [0]).slice(0, 3).flatMap((mn) => ['BEGIN:VALARM', 'ACTION:DISPLAY', `TRIGGER:${mn ? `P0DT0H${mn}M0S` : '-P0DT0H0M0S'}`, `DESCRIPTION:${icsEsc(e.title)}`, 'END:VALARM']),
+      'END:VEVENT');
   }
   lines.push('END:VCALENDAR');
   return lines.join('\r\n') + '\r\n';

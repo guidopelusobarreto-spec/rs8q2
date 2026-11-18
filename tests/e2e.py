@@ -506,6 +506,9 @@ with sync_playwright() as p:
     t = dlg(page).inner_text()
     ok('Fossify: explica cómo importarlo y deja elegir sustancias', 'Fossify Calendar' in t and dlg(page).locator('input[name=on]').count() >= 1)
     ok('Fossify: actualización automática marcada por defecto', dlg(page).locator('input[name=auto]').is_checked())
+    wk = dlg(page).locator('[data-wk="Retatrutida"]')
+    ok('Fossify: Retatrutida «1 vez por semana» pide un día fijo', wk.count() == 1 and wk.locator('select').count() == 1)
+    wk.locator('select').select_option('5'); wk.locator('input[type=time]').fill('21:00')
     with page.expect_download() as dl_info:
         dlg(page).locator('button:has-text("Enviar a Fossify")').click()
     name = dl_info.value.suggested_filename
@@ -515,6 +518,17 @@ with sync_playwright() as p:
     ok(f'Fossify: .ics con hora local, categoría TOMAS y aviso ({ics.count("BEGIN:VEVENT")} eventos)',
        ics.startswith('BEGIN:VCALENDAR') and ics.count('BEGIN:VEVENT') >= 1 and 'CATEGORIES:TOMAS' in ics and 'TRIGGER:-P0DT0H0M0S' in ics
        and _re.search(r'DTSTART:\d{8}T\d{6}\r\n', ics) is not None and 'LAST-MODIFIED:' in ics)
+    blocks = [x for x in ics.split('BEGIN:VEVENT')[1:] if 'CATEGORIES:TOMAS' in x]
+    def _hours(x):
+        a1, b1 = _re.search(r'DTSTART:(\d{8})T(\d{2})(\d{2})', x).groups(), _re.search(r'DTEND:(\d{8})T(\d{2})(\d{2})', x).groups()
+        return a1, b1
+    ok('Fossify: cada aviso ocupa su hora entera (de HH:00 a HH+1:00)', all(h[0][2] == '00' and h[1][2] == '00' and int(h[1][1]) == (int(h[0][1]) + 1) % 24 for h in map(_hours, blocks)))
+    reta = [x for x in blocks if _re.search(r'SUMMARY:💊[^\r]*Retatrutida [\d.]+ mg', x)]  # la de Lipólisis (la otra de Ana es en «unidad», miércoles)
+    fri = [dt.date(int(h[0][0][:4]), int(h[0][0][4:6]), int(h[0][0][6:])).weekday() == 4 and h[0][1] == '21' for h in map(_hours, reta)]
+    ok(f'Fossify: Retatrutida los viernes de 21 a 22 ({len(reta)} avisos)', reta and all(fri))
+    if not (reta and all(fri)): print('DBG', [(_hours(x)[0], _re.search(r'SUMMARY:([^\r]*)', x).group(1)) for x in reta])
+    same = [k for k in (tuple(_hours(x)[0][:2]) for x in blocks)]
+    ok('Fossify: un solo bloque por día y hora (las tomas de la misma hora van juntas)', len(same) == len(set(same)))
     # cambiar el plan (quitar su pausa) → se manda solo el archivo actualizado, con los mismos UID y marca mayor
     with page.expect_download(timeout=8000) as dl2:
         page.locator('[data-unpause]').last.click(); page.wait_for_timeout(300)
@@ -522,7 +536,8 @@ with sync_playwright() as p:
     ics2 = open(dl2.value.path(), encoding='utf-8', newline='').read()
     lm1, lm2 = _re.search(r'LAST-MODIFIED:(\S+)', ics).group(1), _re.search(r'LAST-MODIFIED:(\S+)', ics2).group(1)
     uids1, uids2 = set(_re.findall(r'UID:(\S+)', ics)), set(_re.findall(r'UID:(\S+)', ics2))
-    ok(f'Fossify: al cambiar el plan se actualiza solo, sin duplicar ({len(uids2)} eventos, {len(uids1 & uids2)} ya enviados)', lm2 > lm1 and uids1 <= uids2 and len(uids2) > len(uids1))
+    sums = lambda t: set(_re.findall(r'UID:(\S+)[\s\S]*?SUMMARY:([^\r]*)', t))
+    ok(f'Fossify: al cambiar el plan se actualiza solo, sin duplicar ({len(uids2)} eventos, {len(uids1 & uids2)} ya enviados, {len(sums(ics2) - sums(ics))} cambiados)', lm2 > lm1 and uids1 <= uids2 and len(sums(ics2) - sums(ics)) > 0)
     # pausa desde mañana → lo que ya no toca pasa a PAPELERA (01/01/2000) sin alarma
     page.locator('#pause').click(); page.wait_for_timeout(300)
     d = dlg(page); d.locator('[name=from]').fill(iso(today + dt.timedelta(days=1)))
