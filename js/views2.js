@@ -8,7 +8,7 @@ import { WHO_ACTIVITY, EMERGENCY } from './safety.js';
 import { productOptions, alertBox, dehydration, DEHYDRATION_TEXT, ruoBadge } from './views1.js';
 import { setPin, checkPin, askPermission, notifySupported, remindersToICS, checkDue } from './notify.js';
 import { confirmCompat } from './views3.js';
-import { scheduleFor, scheduleText, adherence, KINDS, DAY_NAMES, MOMENTS, substanceWeek, substanceWeekText } from './schedule.js';
+import { scheduleFor, scheduleText, adherence, KINDS, DAY_NAMES, MOMENTS, substanceWeek, substanceWeekText, sameReadingTexts } from './schedule.js';
 import { saveUI, refreshProfiles, ctx as appCtx, installApp, appInstalledHere, updateLockBtn } from './app.js';
 import { hoy } from './hoy.js';
 
@@ -189,26 +189,36 @@ export async function planDetalle(view, r, ctx) {
   $('#backBtn')?.addEventListener('click', async () => { if (await backfillDialog(ctx, sibs)) again(); });
   $$('[data-unpause]').forEach((b) => b.addEventListener('click', async () => { if (await removePauseDialog(ctx, sibs, pauses.find((x) => x.id === b.dataset.unpause), labelOf)) again(); }));
   $$('[data-freq]').forEach((btn) => btn.addEventListener('click', async () => {
-    const f = p.phases[btn.dataset.freq], sc = scheduleFor(p, f);
-    const ok = await dialog(`<form><h2>Frecuencia de la fase</h2><p class="small">Tu texto: «${esc(f.frequency || '—')}». No se cambia: solo se corrige cómo lo entiende la pantalla Hoy.</p>
+    const f = p.phases[btn.dataset.freq], sc = scheduleFor(p, f), texts = sameReadingTexts(p, f), others = texts.filter((x) => x !== (f.frequency || ''));
+    const ok = await dialog(`<form><h2>Frecuencia de la fase</h2><p class="small">Tu texto: «${esc(f.frequency || '—')}». No se cambia: solo se corrige cómo lo entiende la app (Hoy, calendario y avisos).</p>
+      <p class="small">Para un día fijo cada semana (p. ej. todos los viernes): marca el día y pon la hora. El tipo pasa solo a «Días concretos».</p>
       ${field('Tipo', `<select name="kind">${Object.entries(KINDS).map(([k, v]) => opt(k, v, sc.kind)).join('')}</select>`)}
       <fieldset><legend>Días (si son días concretos)</legend><div class="row">${[1, 2, 3, 4, 5, 6, 0].map((d) => `<label class="check"><input type="checkbox" name="days" value="${d}" data-multi ${sc.days.includes(d) ? 'checked' : ''}>${DAY_NAMES[d].slice(0, 3)}</label>`).join('')}</div></fieldset>
       <div class="grid">${field('Veces al día', inp('perDay', sc.perDay || 1, 'type="number" min="1" max="12"'))}${field('Veces por semana', inp('perWeek', sc.perWeek ?? '', 'type="number" min="1" max="21"'))}
       ${field('Cada N días', inp('everyN', sc.everyN ?? '', 'type="number" min="1"'))}${field('Hasta M días (solo «cada N a M días»)', inp('everyMax', sc.everyMax ?? '', 'type="number" min="1"'))}${field('Momento', `<select name="moment"><option value="">—</option>${Object.entries(MOMENTS).map(([k, v]) => opt(k, v.label, sc.moments[0])).join('')}</select>`)}</div>
       ${field('Horas fijas (HH:MM, separadas por comas)', inp('times', sc.times.join(', ')))}
+      ${others.length ? `<label class="check"><input type="checkbox" name="allSame" checked>Aplicar también a las fases siguientes que dicen ${others.map((x) => `«${esc(x)}»`).join(', ')}</label>` : ''}
       <input type="hidden" name="reset" value="">
       <div class="row"><button>Guardar</button><button type="button" class="ghost" id="fReset">Lectura automática</button><button type="button" class="ghost" data-close>Cancelar</button></div></form>`, {
-      onOpen: (dl) => dl.querySelector('#fReset').addEventListener('click', () => { dl.querySelector('[name=reset]').value = '1'; dl.querySelector('form').requestSubmit(); }),
+      onOpen: (dl) => {
+        dl.querySelector('#fReset').addEventListener('click', () => { dl.querySelector('[name=reset]').value = '1'; dl.querySelector('form').requestSubmit(); });
+        // Marcar un día con el tipo «veces por semana» o «todos los días» significa días concretos.
+        dl.querySelectorAll('[name=days]').forEach((c) => c.addEventListener('change', () => { const k = dl.querySelector('[name=kind]'); if (c.checked && ['weekly', 'daily', 'unknown'].includes(k.value)) k.value = 'days'; }));
+      },
       onSubmit: async (d) => {
-        if (d.reset) return m.setFrequency(ctx.profileId, p.id, f.frequency, null);
+        const targets = d.allSame ? texts : [f.frequency || ''];
+        if (d.reset) { for (const t of targets) await m.setFrequency(ctx.profileId, p.id, t, null); return true; }
         const times = d.times.split(',').map((x) => x.trim()).filter(Boolean);
         if (times.some((x) => !/^\d{2}:\d{2}$/.test(x))) throw new Error('Horas en formato HH:MM, p. ej. 08:30');
         const days = (d.days || []).map(Number);
+        if (days.length && ['weekly', 'daily', 'unknown'].includes(d.kind)) d.kind = 'days';
         if (d.kind === 'days' && !days.length) throw new Error('Marca al menos un día');
         if (d.kind === 'weekly' && !(Number(d.perWeek) > 0)) throw new Error('Indica cuántas veces por semana');
         if ((d.kind === 'everyN' || d.kind === 'interval') && !(Number(d.everyN) > 0)) throw new Error('Indica cada cuántos días');
         if (d.kind === 'interval' && Number(d.everyMax) < Number(d.everyN)) throw new Error('«Hasta M días» debe ser igual o mayor que N');
-        return m.setFrequency(ctx.profileId, p.id, f.frequency, { kind: d.kind, days, perDay: Number(d.perDay) || 1, perWeek: Number(d.perWeek) || null, everyN: Number(d.everyN) || null, everyMax: Number(d.everyMax) || null, perDayMax: sc.perDayMax ?? null, times, moments: d.moment ? [d.moment] : [], maxPerWeek: sc.maxPerWeek });
+        const sched = { kind: d.kind, days, perDay: Number(d.perDay) || 1, perWeek: Number(d.perWeek) || null, everyN: Number(d.everyN) || null, everyMax: Number(d.everyMax) || null, perDayMax: sc.perDayMax ?? null, times, moments: d.moment ? [d.moment] : [], maxPerWeek: sc.maxPerWeek };
+        for (const t of targets) await m.setFrequency(ctx.profileId, p.id, t, sched);
+        return true;
       },
     });
     if (ok) { toast('Frecuencia guardada'); planDetalle(view, r, ctx); }

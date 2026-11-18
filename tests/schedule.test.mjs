@@ -67,3 +67,13 @@ test('tarjeta hecha: cantidad real y «hoy» solo si se mira hoy', async () => {
   assert.equal(doneWhen('2026-09-18', '2026-11-18'), '');
   assert.equal(doneWhen('2026-11-18', '2026-11-18'), 'hoy ');
 });
+
+test('corregir frecuencia: las fases siguientes que se leen igual se corrigen juntas', async () => {
+  const { sameReadingTexts } = await import('../js/schedule.js');
+  const plan = { phases: [
+    { fromWeek: 1, toWeek: 4, frequency: '1 vez por semana (subcutánea)' }, { fromWeek: 5, toWeek: 12, frequency: '1 vez por semana' },
+    { fromWeek: 13, toWeek: 24, frequency: '1 vez por semana' }, { fromWeek: 25, toWeek: null, frequency: '1 inyección cada 10 a 14 días' }] };
+  assert.deepEqual(sameReadingTexts(plan, plan.phases[0]), ['1 vez por semana (subcutánea)', '1 vez por semana']);
+  assert.deepEqual(sameReadingTexts(plan, plan.phases[1]), ['1 vez por semana'], 'las anteriores no se tocan');
+  assert.deepEqual(sameReadingTexts(plan, plan.phases[3]), ['1 inyección cada 10 a 14 días']);
+});

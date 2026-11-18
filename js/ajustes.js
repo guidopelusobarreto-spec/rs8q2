@@ -378,8 +378,9 @@ export async function calendarDialog(ctx) {
   const free = keys.map(([k, l], i) => {
     const ps = plans.filter((p) => icsKey(p) === k), nd = ps.map((p) => ({ p, ...phasesWithoutDay(p, t) }));
     const last = admins.filter((a) => ['realizado', 'retrasado'].includes(a.status) && ps.some((p) => belongsTo(a, p))).map((a) => a.date).sort().pop();
-    const set = nd.flatMap((x) => x.weekly.map((w) => x.p.freqOverrides?.[w])).find((o) => o?.kind === 'days' && o.days?.length);
-    return { k, l, i, nd, day: set ? set.days[0] : last ? DOW(last) : DOW(ps[0].start || t), time: set?.times?.[0] || '09:00', fromLast: !set && !!last, set: !!set };
+    const ovs = nd.flatMap((x) => x.weekly.map((w) => x.p.freqOverrides?.[w])).filter(Boolean), set = ovs.find((o) => o.kind === 'days' && o.days?.length);
+    const hour = set?.times?.[0] || ovs.map((o) => o.times?.[0]).find(Boolean) || '09:00'; // la hora que ya hubieras puesto
+    return { k, l, i, nd, day: set ? set.days[0] : last ? DOW(last) : DOW(ps[0].start || t), time: hour, fromLast: !set && !!last, set: !!set };
   });
   const dayBox = (f) => !f.nd.some((x) => x.weekly.length) ? '' : `<div class="card" data-wk="${esc(f.k)}"><p class="small"><strong>${esc(f.l)}</strong>: tu protocolo dice «${esc(f.nd.find((x) => x.weekly.length).weekly[0])}», sin día. ${f.set ? 'Día fijado para los avisos:' : `Para avisarte hace falta un día fijo${f.fromLast ? ' (propuesto: el de tu última toma registrada)' : ''}.`} Ese día también se verá en Hoy y en el calendario de la app.</p>
       <div class="row">${field('Día', `<select name="wd${f.i}">${DAY_NAMES.map((n, d) => opt(String(d), n, String(f.day))).join('')}</select>`)}${field('Hora', inp('wt' + f.i, f.time, 'type="time"'))}</div></div>`;

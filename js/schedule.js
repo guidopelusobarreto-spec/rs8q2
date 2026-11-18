@@ -207,6 +207,13 @@ export function missingDoses(plan, admins, until) {
   return out;
 }
 
+// Textos de esta fase y de las siguientes que se leen igual (p. ej. «1 vez por semana (subcutánea)» y «1 vez por semana»),
+// para corregirlos todos de una vez.
+export function sameReadingTexts(plan, phase) {
+  const sig = (t) => { const x = parseFrequency(t || ''); return JSON.stringify([x.kind, x.perDay, x.perWeek, x.everyN, x.everyMax, x.days, x.times, x.moments]); };
+  const k = sig(phase?.frequency);
+  return [...new Set([phase?.frequency || '', ...(plan.phases || []).filter((f) => f.fromWeek >= (phase?.fromWeek || 1) && sig(f.frequency) === k).map((f) => f.frequency || '')])];
+}
 // Cantidad real de una toma registrada (texto como el del plan) o '' si no la anotó.
 export const realAmount = (a, ph) => (a && a.amount != null && a.amount !== '' ? amountText({ amount: Number(a.amount), amountMax: null, unit: a.unit || ph?.unit || '' }) : '');
 // «Hecho hoy a las…» solo si el día que se mira es hoy.
