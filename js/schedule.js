@@ -207,6 +207,10 @@ export function missingDoses(plan, admins, until) {
   return out;
 }
 
+// Cantidad real de una toma registrada (texto como el del plan) o '' si no la anotó.
+export const realAmount = (a, ph) => (a && a.amount != null && a.amount !== '' ? amountText({ amount: Number(a.amount), amountMax: null, unit: a.unit || ph?.unit || '' }) : '');
+// «Hecho hoy a las…» solo si el día que se mira es hoy.
+export const doneWhen = (viewDate, today) => (viewDate === today ? 'hoy ' : '');
 export const amountText = (f) => (f?.amount == null ? '' : `${f.amount}${f.amountMax != null ? '–' + f.amountMax : ''} ${f.unit || ''}`.trim());
 
 // Semanas totales de un plan (para «semana X de N»).

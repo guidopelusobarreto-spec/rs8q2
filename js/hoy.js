@@ -3,7 +3,7 @@ import { esc, $, $$, toast, dialog, fmtDate, field, inp } from './ui.js';
 import { todayISO, planEnd, planBaseEnd, diffDays, addDays, planWeek, pausedOn, pausesOf, notesFor, restWindow, restText } from './model.js';
 import { pauseText, pauseDialog, resumeDialog } from './pausas.js';
 import { feelChip, feelDialog, guideBox, startDialog, guideContext, guideHTML, switchDialog, pendingDoses, reviewDialog, quickDialog, calendarDialog, calendarAuto, calendarUntil, syncCalendar } from './ajustes.js';
-import { MOMENTS, scheduleText, amountText, adherence, totalWeeks, substanceWeek, substanceWeekText } from './schedule.js';
+import { MOMENTS, scheduleText, amountText, adherence, totalWeeks, substanceWeek, substanceWeekText, realAmount, doneWhen } from './schedule.js';
 import { fmtDoc, fichaHTML, splitFichas, cleanInline } from './text.js';
 import { productOptions, exceedFlow } from './views1.js';
 import { confirmCompat } from './views3.js';
@@ -16,6 +16,10 @@ const feelBtn = (a) => `<button class="link" data-feel="${a.id}">${a.feel ? 'Cam
 // Si se registró una cantidad distinta de la de la fase (cantidad fija), se muestra al lado del «Hecho».
 const otherAmt = (a, ph) => (a && a.amount != null && ph?.amount != null && ph.amountMax == null && Number(a.amount) !== Number(ph.amount)
   ? ` <span class="chip">Otra cantidad: ${esc(String(a.amount).replace('.', ','))} ${esc(a.unit || ph.unit || '')}</span>` : '');
+// Con la toma registrada, la tarjeta muestra la cantidad real; la de tu plan queda debajo si es distinta.
+const realAmt = realAmount;
+const amtHead = (ph, a) => esc(realAmt(a, ph) || amountText(ph) || '—');
+const planLine = (ph, a) => { const r = realAmt(a, ph), pl = amountText(ph); return r && pl && r !== pl ? `<p class="freq">Tu plan: ${esc(pl)}</p>` : ''; };
 const longDate = (d) => new Date(d + 'T12:00:00').toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' });
 const GROUPS = [['manana', 'Mañana'], ['mediodia', 'Mediodía'], ['tarde', 'Tarde'], ['noche', 'Noche'], ['', 'Sin hora fija']];
 const groupOf = (s) => s.moment || (s.time ? (s.time < '12:00' ? 'manana' : s.time < '15:00' ? 'mediodia' : s.time < '20:00' ? 'tarde' : 'noche') : '');
@@ -104,17 +108,18 @@ export async function hoy(view, r, ctx) {
     const acts = s.status === 'done' ? `<span><span class="chip ok">✓ Hecho ${s.admin.date !== date ? `el ${esc(fmtDate(s.admin.date).slice(0, 5))} ` : ''}a las ${esc(s.admin.time)}</span>${otherAmt(s.admin, s.phase)}${feelChip(s.admin)}</span>${feelBtn(s.admin)}<button class="link" data-undo="${s.admin.id}">Deshacer</button>`
       : s.status === 'omitted' ? `<span class="chip">Omitido</span><button class="link" data-undo="${s.admin.id}">Deshacer</button>`
       : `<button class="ok" data-do="done" data-k="${esc(s.key)}">Hecho</button><button class="ghost" data-do="later" data-k="${esc(s.key)}">Más tarde</button><button class="ghost" data-do="skip" data-k="${esc(s.key)}">Omitir</button><button class="ghost" data-do="other" data-k="${esc(s.key)}">Otro día o cantidad</button>`;
-    return `<div class="dose ${cls}" style="--h:${hueFor(label)}"><div class="top"><span class="name">${esc(label)}</span><span class="amt">${esc(amountText(s.phase) || '—')}</span></div>
-      ${wk(s.plan)}${freqLine(s.phase, s.sched)}${when && s.sched.perDay > 1 ? `<p class="freq">${esc(when)}</p>` : ''}${guideBox(notesFor(s.plan, date))}${proto(s.plan)}
+    const sa = s.status === 'done' ? s.admin : null;
+    return `<div class="dose ${cls}" style="--h:${hueFor(label)}"><div class="top"><span class="name">${esc(label)}</span><span class="amt">${amtHead(s.phase, sa)}</span></div>
+      ${planLine(s.phase, sa)}${wk(s.plan)}${freqLine(s.phase, s.sched)}${when && s.sched.perDay > 1 ? `<p class="freq">${esc(when)}</p>` : ''}${guideBox(notesFor(s.plan, date))}${proto(s.plan)}
       ${s.status === 'snoozed' ? `<p><span class="chip warn">Pospuesta hasta las ${new Date(s.snoozedUntil).toTimeString().slice(0, 5)}</span></p>` : ''}
       <div class="acts">${acts}</div></div>`;
   };
   const groups = GROUPS.map(([k, l]) => [l, ag.slots.filter((s) => groupOf(s) === k)]).filter(([, a]) => a.length);
   const weekly = ag.weekly.map((w, i) => {
-    const label = L(w.plan), done = w.count >= w.needed;
-    return `<div class="dose ${done ? 'done' : ''}" style="--h:${hueFor(label)}"><div class="top"><span class="name">${esc(label)}</span><span class="amt">${esc(amountText(w.phase) || '—')}</span></div>
-      ${wk(w.plan)}${freqLine(w.phase, w.sched)}${guideBox(notesFor(w.plan, date))}${proto(w.plan)}<p class="freq">Esta semana del plan (${fmtDate(w.weekStart)} – ${fmtDate(w.weekEnd)}): <strong>${w.count} de ${w.needed}</strong></p>
-      <div class="acts">${w.today.length ? `<span><span class="chip ok">✓ Hecho hoy a las ${esc(w.today[w.today.length - 1].time)}</span>${otherAmt(w.today[w.today.length - 1], w.phase)}${feelChip(w.today[w.today.length - 1])}</span>${feelBtn(w.today[w.today.length - 1])}<button class="link" data-undo="${w.today[w.today.length - 1].id}">Deshacer</button>`
+    const label = L(w.plan), done = w.count >= w.needed, wa = w.today[w.today.length - 1];
+    return `<div class="dose ${done ? 'done' : ''}" style="--h:${hueFor(label)}"><div class="top"><span class="name">${esc(label)}</span><span class="amt">${amtHead(w.phase, wa)}</span></div>
+      ${planLine(w.phase, wa)}${wk(w.plan)}${freqLine(w.phase, w.sched)}${guideBox(notesFor(w.plan, date))}${proto(w.plan)}<p class="freq">Esta semana del plan (${fmtDate(w.weekStart)} – ${fmtDate(w.weekEnd)}): <strong>${w.count} de ${w.needed}</strong></p>
+      <div class="acts">${w.today.length ? `<span><span class="chip ok">✓ Hecho ${doneWhen(date, t)}a las ${esc(w.today[w.today.length - 1].time)}</span>${otherAmt(w.today[w.today.length - 1], w.phase)}${feelChip(w.today[w.today.length - 1])}</span>${feelBtn(w.today[w.today.length - 1])}<button class="link" data-undo="${w.today[w.today.length - 1].id}">Deshacer</button>`
         : done ? '<span class="chip ok">✓ Completo esta semana</span>' : `<button class="ok" data-do="wdone" data-i="${i}">Hecho hoy</button><button class="ghost" data-do="wother" data-i="${i}">Otro día o cantidad</button>`}</div></div>`;
   }).join('');
   const demand = ag.demand.map((d, i) => {
@@ -126,8 +131,8 @@ export async function hoy(view, r, ctx) {
   // Cada N a M días: ventana desde tu última toma.
   const interval = ag.interval.map((x, i) => {
     const label = L(x.plan), a = x.today[x.today.length - 1];
-    return `<div class="dose ${a ? 'done' : ''}" style="--h:${hueFor(label)}"><div class="top"><span class="name">${esc(label)}</span><span class="amt">${esc(amountText(x.phase) || '—')}</span></div>
-      ${wk(x.plan)}${freqLine(x.phase, x.sched)}${guideBox(notesFor(x.plan, date))}${proto(x.plan)}
+    return `<div class="dose ${a ? 'done' : ''}" style="--h:${hueFor(label)}"><div class="top"><span class="name">${esc(label)}</span><span class="amt">${amtHead(x.phase, a)}</span></div>
+      ${planLine(x.phase, a)}${wk(x.plan)}${freqLine(x.phase, x.sched)}${guideBox(notesFor(x.plan, date))}${proto(x.plan)}
       <p class="freq">${x.last ? `Última: ${esc(fmtDate(x.last.forDate || x.last.date))} · ` : ''}${x.from === x.to ? `Toca desde el ${esc(fmtDate(x.from))}` : `Toca entre el ${esc(fmtDate(x.from))} y el ${esc(fmtDate(x.to))}`}</p>
       ${x.late ? '<p><span class="chip warn">Pasado el plazo de tu texto</span></p>' : ''}
       <div class="acts">${a ? `<span><span class="chip ok">✓ Hecho a las ${esc(a.time)}</span>${otherAmt(a, x.phase)}${feelChip(a)}</span>${feelBtn(a)}<button class="link" data-undo="${a.id}">Deshacer</button>`

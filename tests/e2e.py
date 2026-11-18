@@ -248,6 +248,7 @@ with sync_playwright() as p:
     ok('hoy: deshacer devuelve la toma a pendiente', page.locator('.dose.done', has_text='BPC-157').count() == 0)
     page.locator('.dose', has_text='1 vez por semana (SC)').locator('button:has-text("Hecho hoy")').click(); page.wait_for_timeout(600)
     ok('hoy: cupo semanal marcado', 'Hecho hoy a las' in page.locator('.dose', has_text='1 vez por semana (SC)').inner_text())
+    ok('hoy: misma cantidad que el plan, sin línea «Tu plan»', 'Tu plan:' not in page.locator('.dose', has_text='1 vez por semana (SC)').inner_text())
     page.locator('.dose', has_text='Creatina').locator('button:has-text("Más tarde")').click(); page.wait_for_timeout(300)
     dlg(page).locator('button:has-text("1 hora")').click(); page.wait_for_timeout(600)
     ok('hoy: más tarde pospone', 'Pospuesta hasta' in page.locator('.dose', has_text='Creatina').inner_text())
@@ -285,6 +286,8 @@ with sync_playwright() as p:
     ok('otra cantidad: ventana con la cantidad del plan', d.locator('[name=amount]').input_value() == '5000' and d.locator('[name=notes]').count() == 1)
     d.locator('[name=amount]').fill('4000'); d.locator('[name=notes]').fill('nota e2e'); d.locator('button:has-text("Guardar")').click(); page.wait_for_timeout(600)
     ok('otra cantidad: hecha y marcada', 'Otra cantidad: 4000 UI' in page.locator('.dose.done', has_text='Vitamina D3').inner_text())
+    vd = page.locator('.dose.done', has_text='Vitamina D3')
+    ok('tarjeta hecha: arriba la cantidad real y debajo la del plan', vd.locator('.amt').inner_text().strip() == '4000 UI' and 'Tu plan: 5000 UI' in vd.inner_text())
     go(page, '#/historial'); page.wait_for_timeout(300)
     ok('otra cantidad: en el historial', '4000 UI' in page.inner_text('main'))
 

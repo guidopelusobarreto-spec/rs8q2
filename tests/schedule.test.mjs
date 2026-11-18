@@ -56,3 +56,14 @@ test('cumplimiento: tomas hechas frente a previstas', () => {
   const reta = plan('reta', [F(1, 4, 1, 'u', '1 vez por semana')]);
   assert.deepEqual(adherence(reta, [{ planId: 'reta', date: '2026-10-22', time: '09:00', status: 'realizado' }], '2026-11-02'), { expected: 2, done: 1, pct: 50 });
 });
+
+test('tarjeta hecha: cantidad real y «hoy» solo si se mira hoy', async () => {
+  const { realAmount, doneWhen, amountText } = await import('../js/schedule.js');
+  const ph = { amount: 1, amountMax: 2, unit: 'mg' };
+  assert.equal(amountText(ph), '1–2 mg');
+  assert.equal(realAmount({ amount: 1, unit: 'mg' }, ph), '1 mg');
+  assert.equal(realAmount({ amount: '1.5' }, ph), '1.5 mg', 'sin unidad: la del plan');
+  assert.equal(realAmount({ amount: null }, ph), '');
+  assert.equal(doneWhen('2026-09-18', '2026-11-18'), '');
+  assert.equal(doneWhen('2026-11-18', '2026-11-18'), 'hoy ');
+});
